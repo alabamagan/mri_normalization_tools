@@ -55,6 +55,18 @@ class LinearRescale(MNTSFilter):
         input = sitk.ShiftScale(input, self.mean, 1)
         return input
 
+    def filter(self, input, mask):
+        super(LinearRescale, self).filter(input, mask)
+        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
+
+        input_mean = np_im[np_mask != 0].mean()
+        input_std  = np_im[np_mask != 0].max()
+
+        # Use sitk function for overflow/underflow protection
+        input = sitk.ShiftScale(input, -input_mean, 1. / input_std)
+        input = sitk.ShiftScale(input, 0, self._std)
+        input = sitk.ShiftScale(input, self.mean, 1)
+        return input
 
 class ZScoreNorm(LinearRescale):
     r"""
@@ -77,6 +89,17 @@ class ZScoreNorm(LinearRescale):
 
         # Use sitk function for overflow/underflow protection
         input = sitk.ShiftScale(input, -input_mean, 1./input_std)
+        return input
+
+    def filter(self, input, mask):
+        super(LinearRescale, self).filter(input, mask)
+        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
+
+        input_mean = np_im[np_mask != 0].mean()
+        input_std  = np_im[np_mask != 0].max()
+
+        # Use sitk function for overflow/underflow protection
+        input = sitk.ShiftScale(input, -input_mean, 1. / input_std)
         return input
 
 
@@ -122,8 +145,17 @@ class RangeRescale(MNTSFilter):
         self._quantiles = (lower, upper)
 
     def filter(self, input):
+        dat = sitk.GetArrayFromImage(input)
         if not self._quantiles is None:
             l, u = np.quantile(dat.flatten(), self._quantiles)
+            input = sitk.Clamp(input, l, u)
+        input = sitk.RescaleIntensity(self.min, self.max)
+        return input
+
+    def filter(self, input, mask):
+        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
+        if not self._quantiles is None:
+            l, u = np.quantile(np_im[np_mask != 0].flatten(), self._quantiles)
             input = sitk.Clamp(input, l, u)
         input = sitk.RescaleIntensity(self.min, self.max)
         return input

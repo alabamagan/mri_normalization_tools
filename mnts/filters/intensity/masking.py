@@ -14,7 +14,7 @@ class OtsuTresholding(MNTSFilter):
     def filter(self, input):
         outmask = sitk.OtsuThreshold(input, 0, 1) # For some reason the official implementation reverse this
         outmask = sitk.Cast(outmask, sitk.sitkUInt8)
-        outmask = sitk.BinaryMorphologicalClosing(outmask, [2, 2, 2])
+        outmask = sitk.BinaryMorphologicalClosing(outmask, [2, 2, 2]) #TODO: check kernel size
         outmask[:, :, 0] = sitk.BinaryFillhole(outmask[:,:,0])
         outmask[:, :, -1] = sitk.BinaryFillhole(outmask[:,:,-1])
         outmask = sitk.BinaryFillhole(outmask, fullyConnected=True)
