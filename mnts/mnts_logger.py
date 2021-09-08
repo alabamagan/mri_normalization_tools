@@ -15,7 +15,7 @@ class MNTSLogger(object):
     CRITICAL = logging.CRITICAL
     FATAL = logging.FATAL
     ERROR = logging.ERROR
-    log_level = os.getenv("MNT_LOGGER_LEVEL", default=INFO)
+    log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
 
     def __init__(self, log_dir, logger_name=__name__, verbose=False, log_level=log_level, keep_file=True):
         """
@@ -129,14 +129,14 @@ class MNTSLogger(object):
 
     def __class_getitem__(cls, item):
         if cls.global_logger is None:
-            cls.global_logger = Logger('./default.log', logger_name='default', verbose=True)
+            cls.global_logger = MNTSLogger('./default.log', logger_name='default', verbose=True)
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
             cls.global_logger.log_print("Requesting logger [{}] not exist, creating...".format(
                 str(item)
             ))
-            cls.all_loggers[item] = Logger(cls.global_logger._log_dir,
+            cls.all_loggers[item] = MNTSLogger(cls.global_logger._log_dir,
                                            logger_name=str(item),
                                            verbose=cls.global_logger._verbose)
             return cls.all_loggers[item]
