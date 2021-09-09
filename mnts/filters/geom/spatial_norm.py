@@ -43,7 +43,7 @@ class SpatialNorm(MNTSFilter):
 
         f = sitk.ResampleImageFilter()
         f.SetReferenceImage(input)
-        f.SetOutputSpacing(new_spacing)
+        f.SetOutputSpacing(new_spacing.tolist())
         f.SetSize(new_size)
         return f.Execute(input)
 

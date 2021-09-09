@@ -41,31 +41,24 @@ class LinearRescale(MNTSFilter):
     def std(self, std):
         self._std = float(std)
 
-    def filter(self, input):
-        super(LinearRescale, self).filter(input)
-        f = sitk.StatisticsImageFilter()
-        f.Execute(input)
+    def filter(self, input, mask = None):
+        if mask is None:
+            np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
 
-        input_mean = f.GetMean()
-        input_std = f.GetVariance()**.5
+            input_mean = np_im[np_mask != 0].mean()
+            input_std  = np_im[np_mask != 0].max()
+        else:
+            f = sitk.StatisticsImageFilter()
+            f.Execute(input)
+            input_mean = f.GetMean()
+            input_std = f.GetVariance() ** .5
 
-        # Use sitk function for overflow/underflow protection
-        input = sitk.ShiftScale(input, -input_mean, 1./input_std)
-        input = sitk.ShiftScale(input, 0, self._std)
-        input = sitk.ShiftScale(input, self.mean, 1)
-        return input
-
-    def filter(self, input, mask):
-        super(LinearRescale, self).filter(input, mask)
-        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
-
-        input_mean = np_im[np_mask != 0].mean()
-        input_std  = np_im[np_mask != 0].max()
-
-        # Use sitk function for overflow/underflow protection
-        input = sitk.ShiftScale(input, -input_mean, 1. / input_std)
-        input = sitk.ShiftScale(input, 0, self._std)
-        input = sitk.ShiftScale(input, self.mean, 1)
+        # !!!TODO: Overflow protection
+        # Cast to float if not float already.
+        if input.GetPixelID() not in [8, 9]:
+            self._logger.warning("Casting the")
+            input = sitk.Cast(input, sitk.sitkFloat32)
+        input = ((input - input_mean) / input_std + self._mean) * self._std
         return input
 
 class ZScoreNorm(LinearRescale):
@@ -75,31 +68,32 @@ class ZScoreNorm(LinearRescale):
 
     .. math::
         z = \frac{x-\mu}{\sigmal}
+
+    .. note ::
+        This filter changes the datatype of the image to float32 to retain the resolution of the
+        input data.
     """
     def __init__(self):
         super(ZScoreNorm, self).__init__(0, 1.)
 
-    def filter(self, input):
-        super(LinearRescale, self).filter(input)
-        f = sitk.StatisticsImageFilter()
-        f.Execute(input)
+    def filter(self,
+               input: sitk.Image,
+               mask: sitk.Image = None):
+        if not mask is None:
+            np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
+            input_mean = np_im[np_mask != 0].mean()
+            input_std  = np_im[np_mask != 0].max()
+        else:
+            f = sitk.StatisticsImageFilter()
+            f.Execute(input)
+            input_mean = f.GetMean()
+            input_std = f.GetVariance() ** .5
 
-        input_mean = f.GetMean()
-        input_std = f.GetVariance()**.5
-
-        # Use sitk function for overflow/underflow protection
-        input = sitk.ShiftScale(input, -input_mean, 1./input_std)
-        return input
-
-    def filter(self, input, mask):
-        super(LinearRescale, self).filter(input, mask)
-        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
-
-        input_mean = np_im[np_mask != 0].mean()
-        input_std  = np_im[np_mask != 0].max()
-
-        # Use sitk function for overflow/underflow protection
-        input = sitk.ShiftScale(input, -input_mean, 1. / input_std)
+        # Cast to float if not float already.
+        if input.GetPixelID() not in [8, 9]:
+            self._logger.warning("Casting the input to float32.")
+            input = sitk.Cast(input, sitk.sitkFloat32)
+        input = (input - input_mean) / input_std
         return input
 
 
@@ -115,7 +109,7 @@ class RangeRescale(MNTSFilter):
     def __init__(self,
                  min: float = None,
                  max: float = None,
-                 quantiles: Union[None, Tuple[float, float], List[float, float]] = None):
+                 quantiles: Union[None, Tuple[float], List[float]] = None):
         super(RangeRescale, self).__init__()
         self._min = min
         self._max = max
@@ -144,18 +138,18 @@ class RangeRescale(MNTSFilter):
             return
         self._quantiles = (lower, upper)
 
-    def filter(self, input):
-        dat = sitk.GetArrayFromImage(input)
-        if not self._quantiles is None:
-            l, u = np.quantile(dat.flatten(), self._quantiles)
-            input = sitk.Clamp(input, l, u)
-        input = sitk.RescaleIntensity(self.min, self.max)
-        return input
-
-    def filter(self, input, mask):
-        np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
-        if not self._quantiles is None:
-            l, u = np.quantile(np_im[np_mask != 0].flatten(), self._quantiles)
-            input = sitk.Clamp(input, l, u)
-        input = sitk.RescaleIntensity(self.min, self.max)
-        return input
+    def filter(self, input, mask=None):
+        if mask is not None:
+            np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
+            if not self._quantiles is None:
+                l, u = np.quantile(np_im[np_mask != 0].flatten(), self._quantiles)
+                input = sitk.Clamp(input, l, u)
+            input = sitk.RescaleIntensity(self.min, self.max)
+            return input
+        else:
+            dat = sitk.GetArrayFromImage(input)
+            if not self._quantiles is None:
+                l, u = np.quantile(dat.flatten(), self._quantiles)
+                input = sitk.Clamp(input, l, u)
+            input = sitk.RescaleIntensity(input, self.min, self.max)
+            return input

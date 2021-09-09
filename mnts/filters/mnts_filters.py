@@ -25,7 +25,9 @@ class MNTSFilter(object):
         self.filter(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.__class__.__name__}: \n\t" + '\n\t'.join(["{: >15} - %s"%item for item in vars(self).items()])
+        return f"{self.__class__.__name__}: \n\t" + \
+               '\n\t'.join(["{: >10} - {}".format(item[0], item[1]) if item[0].find('logger') == -1 else ""
+                            for item in vars(self).items()])
 
 
 class MNTSFilterPipeline(list):
