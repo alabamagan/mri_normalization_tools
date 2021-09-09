@@ -1,4 +1,5 @@
 import SimpleITK as sitk
+import numpy as np
 from typing import Union, Tuple
 from ..mnts_filters import MNTSFilter
 
@@ -13,10 +14,11 @@ class SpatialNorm(MNTSFilter):
 
     Attributes:
         out_spacing (float, tuple of floats):
-            Desired uniform spacing. Unit is mm.
+            Desired uniform spacing. Unit is mm. Use 0 or negative values if spacing is to be kept
 
     """
     def __init__(self, out_spacing: Union[float, Tuple[float, float, float]] = None):
+        super(SpatialNorm, self).__init__()
         self.out_spacing = out_spacing
 
     @property
@@ -28,10 +30,20 @@ class SpatialNorm(MNTSFilter):
         self._out_spacing = out_spacing if isinstance(out_spacing, (list, tuple)) else [out_spacing]*3
 
 
-    def filter(self, input):
-        super(SpatialNorm, self).filter(input)
+    def filter(self, input: sitk.Image):
+        original_size = np.asarray(input.GetSize())
+        original_spacing = np.asarray(input.GetSpacing())
+
+        # Keep spacing if there's a negative value in out_spacing
+        new_spacing = np.asarray(self.out_spacing)
+        new_spacing[new_spacing <= 0] = original_spacing[new_spacing <=0]
+
+        new_size = np.floor((original_size * original_spacing) / new_spacing).astype('int').tolist()
+        self._logger.info(f"From {original_size} -> {new_size}")
+
         f = sitk.ResampleImageFilter()
         f.SetReferenceImage(input)
-        f.SetOutputSpacing(self._out_spacing)
+        f.SetOutputSpacing(new_spacing)
+        f.SetSize(new_size)
         return f.Execute(input)
 
