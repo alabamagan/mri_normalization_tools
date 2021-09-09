@@ -16,7 +16,6 @@ class MNTSFilter(object):
         """
         self._logger = MNTSLogger[self.get_name()]
 
-    @property
     @abstractmethod
     def filter(self, *args, **kwargs):
         pass
@@ -24,13 +23,31 @@ class MNTSFilter(object):
     def get_name(self):
         return self.__class__.__name__
 
+    def get_all_properties(self):
+        n = [(name, self.__getattribute__(name)) for name, value in vars(self.__class__).items() if isinstance(value, property)]
+        return n
+
     def __call__(self, *args, **kwargs):
         self.filter(*args, **kwargs)
 
     def __str__(self):
         return f"{self.__class__.__name__}: \n\t" + \
-               '\n\t'.join(["{: >10} - {}".format(item[0], item[1]) if item[0].find('logger') == -1 else ""
-                            for item in vars(self).items()])
+               '\n\t'.join(["{: >10}: {}".format(item[0], item[1]) for item in self.get_all_properties()])
+
+class MNTSFilterRequireTraining(MNTSFilter):
+    def __init__(self):
+        r"""
+        Base class of filter
+        """
+        super(MNTSFilterRequireTraining, self).__init__()
+
+    @abstractmethod
+    def filter(self, *args, **kwargs):
+        pass
+
+    def get_name(self):
+        return self.__class__.__name__
+
 
 
 class MNTSFilterPipeline(list):
@@ -178,13 +195,13 @@ class MNTSFilterGraph(object):
             if self._nodes_chache.get(node_id, None) is not None: # put this in cache if used many times
                 return self._nodes_chache[node_id]
             elif node_id in self._nodes_chache:
-                self._nodes_chache[node_id] = cur_filter.filter(*data)
+                self._nodes_chache[node_id] = cur_filter(*data)
                 return self._nodes_chache[node_id]
             else:
-                return cur_filter.filter(*data)
+                return cur_filter(*data)
         else:
             self._logger.info(f"Finished step: {self._nodemap[node_id]}")
-            return cur_filter.filter(self._inputs[node_id])
+            return cur_filter(self._inputs[node_id])
 
     def plot_graph(self):
         #TODO: write this nodemap as the legend of the graph.
