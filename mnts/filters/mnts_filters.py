@@ -1,4 +1,7 @@
 from abc import ABCMeta, abstractmethod, abstractproperty
+
+import numpy as np
+
 from ..mnts_logger import MNTSLogger
 from typing import Union, Iterable
 import networkx as nx
@@ -71,6 +74,7 @@ class MNTSFilterGraph(object):
         self._exits = []
         self._logger = MNTSLogger[self.__class__.__name__]
         self._nodemap = {}
+        self._nodes_chache = {}
 
     @property
     def nodes(self):
@@ -109,7 +113,10 @@ class MNTSFilterGraph(object):
                  upstream: Union[None, int, MNTSFilter, Iterable[Union[MNTSFilter, int]]] = None,
                  is_exit: bool =False):
         r"""
-        Add a node to the filter graph
+        Add a node to the filter graph and connect it to the upstream nodes. If no upstream nodes are provided this
+        node is automatically treated as the input node.
+
+        Exit nodes, where marks the end of the normalization pipeline must be labeled using `is_exit` argument.
 
         Args:
             node (MNTSFilter):
@@ -118,9 +125,6 @@ class MNTSFilterGraph(object):
             upstream (MNTSFitler or int or list(MNTSFitler or int)):
                 The upstream source of data of this node. Permit multiple upstream, however, one node cannot have
                 more than one downstream.
-
-        Returns:
-
         """
         assert isinstance(node, MNTSFilter), f"Wrong input type: {node}"
 
@@ -161,7 +165,8 @@ class MNTSFilterGraph(object):
     @cached(cache=LRUCache(maxsize=5))
     def _request_output(self, node_id):
         r"""
-        Use for recursively request data from upstream node
+        Use a bottom up request to walk the graph finding the paths and then generate the output. Request are
+        recursively requested to get data from the upstream.
         """
         in_edges = self._graph.in_edges(node_id)
         upstream_nodes = [t[0] for t in in_edges]
@@ -170,17 +175,30 @@ class MNTSFilterGraph(object):
         if not node_id in self._entrance:
             data = [self._request_output(i) for i in upstream_nodes]
             self._logger.info(f"Finished step: {self._nodemap[node_id]}")
-            return cur_filter.filter(*data)
+            if self._nodes_chache.get(node_id, None) is not None: # put this in cache if used many times
+                return self._nodes_chache[node_id]
+            elif node_id in self._nodes_chache:
+                self._nodes_chache[node_id] = cur_filter.filter(*data)
+                return self._nodes_chache[node_id]
+            else:
+                return cur_filter.filter(*data)
         else:
             self._logger.info(f"Finished step: {self._nodemap[node_id]}")
             return cur_filter.filter(self._inputs[node_id])
 
     def plot_graph(self):
+        #TODO: write this nodemap as the legend of the graph.
         print(self._nodemap)
         nx.draw(self._graph, with_labels=True)
 
     def execute(self, *args):
         assert len(args) == len(self._entrance), "Inputs do not align with output"
+
+        # mark all nodes with multiple downstreams
+        num_of_downstream = {n: len(self._graph.out_edges(n)) for n in self.nodes}
+        for key in num_of_downstream:
+            if num_of_downstream[key] >= 2:
+                self._nodes_chache[key] = None
 
         self._inputs = {n: args[i] for i, n in enumerate(self._entrance)}
 
