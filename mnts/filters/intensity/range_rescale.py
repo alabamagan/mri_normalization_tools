@@ -2,10 +2,11 @@ import SimpleITK as sitk
 import numpy as np
 from typing import Union, Tuple, List
 from ..mnts_filters import MNTSFilter
+from .intensity_base import MNTSIntensityBase
 
 __all__ = ['RangeRescale']
 
-class RangeRescale(MNTSFilter):
+class RangeRescale(MNTSIntensityBase, MNTSFilter):
     r"""
     Rescale the image to the given range.
 
@@ -49,7 +50,7 @@ class RangeRescale(MNTSFilter):
             return
         self._quantiles = (lower, upper)
 
-    def filter(self, input, mask=None):
+    def _filter(self, input, mask=None):
         if mask is not None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
             if not self._quantiles is None:

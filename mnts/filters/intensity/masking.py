@@ -1,18 +1,32 @@
 import SimpleITK as sitk
 from typing import Union, Tuple
 from ..mnts_filters import MNTSFilter
+from .intensity_base import MNTSIntensityBase
 
 __all__ = ['OtsuTresholding']
 
-class OtsuTresholding(MNTSFilter):
+class OtsuTresholding(MNTSIntensityBase, MNTSFilter):
     r"""
     This filter creates a foreground mask using the Otsu thresholding followed by binary closing and then hole filling.
+
+    .. note::
+        This class will return binary mask with datatype UInt8
     """
     def __init__(self):
         super(OtsuTresholding, self).__init__()
+        self._closing_kernel_size = [2, 2, 2]
 
-    def filter(self, input):
-        outmask = sitk.OtsuThreshold(input, 0, 1) # For some reason the official implementation reverse this
+    @property
+    def closing_kernel_size(self):
+        return self._closing_kernel_size
+
+    @closing_kernel_size.setter
+    def closing_kernel_size(self, val):
+        return self._closing_kernel_size
+
+    def _filter(self, input:sitk.Image) -> sitk.Image:
+        outmask = sitk.OtsuThreshold(input, 0, 1) # For some reason the official implementation find background
+                                                  # instead of foreground, but maybe I am wrong.
         outmask = sitk.Cast(outmask, sitk.sitkUInt8)
         outmask = sitk.BinaryMorphologicalClosing(outmask, [2, 2, 2]) #TODO: check kernel size
         outmask[:, :, 0] = sitk.BinaryFillhole(outmask[:,:,0])

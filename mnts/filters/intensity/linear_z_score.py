@@ -20,7 +20,7 @@ class ZScoreNorm(LinearRescale):
     def __init__(self):
         super(ZScoreNorm, self).__init__(0, 1.)
 
-    def filter(self,
+    def _filter(self,
                input: sitk.Image,
                mask: sitk.Image = None):
         if not mask is None:

@@ -2,10 +2,11 @@ import SimpleITK as sitk
 import numpy as np
 from typing import Union, Tuple, List
 from ..mnts_filters import MNTSFilter
+from .intensity_base import MNTSIntensityBase
 
 __all__ = ['LinearRescale']
 
-class LinearRescale(MNTSFilter):
+class LinearRescale(MNTSIntensityBase, MNTSFilter):
     r"""
     Description:
         This class rescale the input's linearly to match the desired mean and standard deviation following:
@@ -22,6 +23,7 @@ class LinearRescale(MNTSFilter):
     def __init__(self,
                  mean: float = None,
                  std: float = None):
+        super(LinearRescale, self).__init__()
         self._mean = mean
         self._std = std
 
@@ -41,7 +43,7 @@ class LinearRescale(MNTSFilter):
     def std(self, std):
         self._std = float(std)
 
-    def filter(self, input, mask = None):
+    def _filter(self, input, mask = None):
         if mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
 
