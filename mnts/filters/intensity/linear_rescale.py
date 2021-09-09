@@ -144,7 +144,7 @@ class RangeRescale(MNTSFilter):
             if not self._quantiles is None:
                 l, u = np.quantile(np_im[np_mask != 0].flatten(), self._quantiles)
                 input = sitk.Clamp(input, l, u)
-            input = sitk.RescaleIntensity(self.min, self.max)
+            input = sitk.RescaleIntensity(input, self.min, self.max)
             return input
         else:
             dat = sitk.GetArrayFromImage(input)
