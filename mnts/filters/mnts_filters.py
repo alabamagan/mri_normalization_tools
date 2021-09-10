@@ -1,11 +1,17 @@
+import copy
 from abc import ABCMeta, abstractmethod, abstractproperty
 
+import SimpleITK as sitk
 import numpy as np
+import multiprocessing as mpi
 
 from ..mnts_logger import MNTSLogger
-from typing import Union, Iterable
-import networkx as nx
+from typing import Union, Iterable, List
+from pathlib import Path
 from cachetools import cached, LRUCache
+from copy import deepcopy
+
+import networkx as nx
 
 __all__ = ['MNTSFilterGraph', 'MNTSFilter', 'MNTSFilterPipeline']
 
@@ -18,7 +24,11 @@ class MNTSFilter(object):
 
     @abstractmethod
     def filter(self, *args, **kwargs):
-        pass
+        raise NotImplemented("This is an abstract method.")
+
+    @property
+    def name(self):
+        return self.get_name()
 
     def get_name(self):
         return self.__class__.__name__
@@ -27,8 +37,18 @@ class MNTSFilter(object):
         n = [(name, self.__getattribute__(name)) for name, value in vars(self.__class__).items() if isinstance(value, property)]
         return n
 
+    @staticmethod
+    def read_image(input: Union[str, Path, sitk.Image]):
+        if isinstance(input, (str, Path)):
+            input = sitk.ReadImage(str(input))
+
+        if not isinstance(input, sitk.Image):
+            raise IOError
+        return input
+
+
     def __call__(self, *args, **kwargs):
-        self.filter(*args, **kwargs)
+        return self.filter(*args, **kwargs)
 
     def __str__(self):
         return f"{self.__class__.__name__}: \n\t" + \
@@ -42,12 +62,14 @@ class MNTSFilterRequireTraining(MNTSFilter):
         super(MNTSFilterRequireTraining, self).__init__()
 
     @abstractmethod
-    def filter(self, *args, **kwargs):
+    def train(self, *args, **kwargs):
         pass
 
-    def get_name(self):
-        return self.__class__.__name__
+    def save_state(self):
+        pass
 
+    def load_state(self):
+        pass
 
 
 class MNTSFilterPipeline(list):
@@ -91,7 +113,7 @@ class MNTSFilterGraph(object):
         self._exits = []
         self._logger = MNTSLogger[self.__class__.__name__]
         self._nodemap = {}
-        self._nodes_chache = {}
+        self._nodes_cache = {}
 
     @property
     def nodes(self):
@@ -179,7 +201,6 @@ class MNTSFilterGraph(object):
             for us in upstream:
                 self.add_node(node, us)
 
-    @cached(cache=LRUCache(maxsize=5))
     def _request_output(self, node_id):
         r"""
         Use a bottom up request to walk the graph finding the paths and then generate the output. Request are
@@ -192,14 +213,15 @@ class MNTSFilterGraph(object):
         if not node_id in self._entrance:
             data = [self._request_output(i) for i in upstream_nodes]
             self._logger.info(f"Finished step: {self._nodemap[node_id]}")
-            if self._nodes_chache.get(node_id, None) is not None: # put this in cache if used many times
-                return self._nodes_chache[node_id]
-            elif node_id in self._nodes_chache:
-                self._nodes_chache[node_id] = cur_filter(*data)
-                return self._nodes_chache[node_id]
+            if self._nodes_cache.get(node_id, None) is not None: # put this in cache if used many times
+                return self._nodes_cache[node_id]
+            elif node_id in self._nodes_cache:
+                self._nodes_cache[node_id] = cur_filter(*data)
+                return self._nodes_cache[node_id]
             else:
                 return cur_filter(*data)
         else:
+            # If it an entrance node, acquire input from dictionary.
             self._logger.info(f"Finished step: {self._nodemap[node_id]}")
             return cur_filter(self._inputs[node_id])
 
@@ -208,19 +230,131 @@ class MNTSFilterGraph(object):
         print(self._nodemap)
         nx.draw(self._graph, with_labels=True)
 
-    def execute(self, *args):
-        assert len(args) == len(self._entrance), "Inputs do not align with output"
+    def execute(self,
+                *args,
+                force_request: Union[int, MNTSFilter] = None) -> sitk.Image:
+        r"""
+
+        Args:
+            *args:
+                Arguments are passed to the nodes in list `self._entrance`. If the node require multiple input
+                parameters, pass them as a tuple.
+            force_request:
+                If True, request output from the specified node instead of that in `self._exit`.
+
+        Returns:
+
+        """
+        assert len(args) == len(self._entrance), "Inputs do not align with number of entrance."
 
         # mark all nodes with multiple downstreams
         num_of_downstream = {n: len(self._graph.out_edges(n)) for n in self.nodes}
         for key in num_of_downstream:
             if num_of_downstream[key] >= 2:
-                self._nodes_chache[key] = None
+                self._nodes_cache[key] = None
 
         self._inputs = {n: args[i] for i, n in enumerate(self._entrance)}
 
         # gather_output
         output = {}
-        for i in self._exits:
-            output[i] = self._request_output(i)
+        if force_request is None:
+            for i in self._exits:
+                output[i] = self._request_output(i)
+        else:
+            if isinstance(force_request, MNTSFilter):
+                force_request = self._node_search('filter', force_request)
+            output[force_request] = self._request_output(force_request)
         return output
+
+    def prepare_training_files(self,
+                               nodelist: List[Union[int, MNTSFilter]],
+                               output_prefix: str,
+                               output_directory: Union[str, Path],
+                               *args) -> None:
+        r"""
+        Call the `train` method with *args passed to the methods. This method process one input at a time, thus, need
+        to call this repeatedly to fully prepare the files.
+
+        Folder structure of the intermediate files
+        .
+        └── working_dir/
+            └── temp_file_dir/
+                ├── trained_node_A/
+                │   ├── upstream_node_A1/
+                │   │   ├── output_1
+                │   │   ├── output_2
+                │   │   └── ...
+                │   └── upstream_node_A2/
+                │       ├── output_1
+                │       ├── output_2
+                │       └── ...
+                └── trained_node_B/
+                    └── upstream_node_B1/
+                        ├── output_1
+                        ├── output_2
+                        └── ...
+
+        Args:
+            nodelist (list of int or MNTSFilter):
+                The (list of) nodes that require training. The output from their upstream(s) are collected and
+                computed and them put into the corresponding locations stated above.
+            output_prefix (str):
+                Name for the output. They are saved as `{output_prefix}`.nii.gz.
+            output_directory (str or Path):
+                Specify where to store the output from the upstream nodes.
+            *args:
+                See `:method:self.Execute`.
+            **kwargs:
+
+        Returns:
+            None
+        """
+        temp_dir = Path(output_directory).absolute()
+        if not isinstance(nodelist, (list, tuple)):
+            nodelist = [nodelist]
+
+        #!! Might get some memory issue here, but should be managible.
+        # Create a copy of this class to separate
+        cls_obj = copy.deepcopy(self)
+
+        for n in nodelist:
+            # Create directories first
+            n = cls_obj._node_search('filter', n) if isinstance(n, MNTSFilter) else n
+            node_name = cls_obj.nodes[n]['filter'].get_name() + f"_{n}"
+            node_dir = temp_dir.joinpath(f"{node_name}/")
+            if not node_dir.is_dir():
+                node_dir.mkdir(exist_ok=True, parents=True) # sometimes mpi will mkdir a few times, exist_ok to
+                                                            # prevent it from reporting error
+
+            # Get upstream nodes
+            u_nodes = [x[0] for x in cls_obj._graph.in_edges(n)]
+            for u_node in u_nodes:
+                u_node_name = cls_obj.nodes[u_node]['filter'].get_name() + f"_{u_node}"
+                u_node_dir = node_dir.joinpath(f"{u_node_name}/")
+                if not u_node_dir.is_dir():
+                    u_node_dir.mkdir(exist_ok=True, parents=True)
+
+                out = cls_obj.execute(*args, force_request=u_node)
+                out_name = u_node_dir.joinpath(f"{output_prefix}")
+                sitk.WriteImage(out[u_node], str(out_name.with_suffix('.nii.gz')))
+
+    def __deepcopy__(self, memodict={}):
+        r"""
+        Note that every thing is copied except for the logger and the graph because deepcopying existing
+        graph that has attributes is problematic given they are filters.
+
+        This might be solvable through implementing __deepcopy__ for the filters.
+        """
+        cpyobj = type(self)()
+        attr_copy = ['_entrance', '_exits', '_nodemap', '_nodes_cache']
+        for attr in attr_copy:
+            cpyobj.__setattr__(attr, deepcopy(self.__getattribute__(attr), memodict))
+        cpyobj._graph = self._graph.copy()
+        return cpyobj
+
+    def __str__(self):
+        msg = ""
+        for n in self.nodes:
+            u_nodes = [x[1] for x in self._graph.out_edges(n)]
+            msg += f"{n: >2}: {self.nodes[n]['filter'].get_name()} -> {u_nodes} \n"
+        return msg
