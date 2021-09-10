@@ -1,5 +1,6 @@
 import SimpleITK as sitk
 import numpy as np
+from pathlib import Path
 from typing import Union, Tuple
 from ..mnts_filters import MNTSFilter
 
@@ -30,7 +31,11 @@ class SpatialNorm(MNTSFilter):
         self._out_spacing = out_spacing if isinstance(out_spacing, (list, tuple)) else [out_spacing]*3
 
 
-    def filter(self, input: sitk.Image):
+    def filter(self,
+               input: Union[str, Path, sitk.Image]
+               ):
+        input = self.read_image(input)
+
         original_size = np.asarray(input.GetSize())
         original_spacing = np.asarray(input.GetSpacing())
 
@@ -45,5 +50,6 @@ class SpatialNorm(MNTSFilter):
         f.SetReferenceImage(input)
         f.SetOutputSpacing(new_spacing.tolist())
         f.SetSize(new_size)
-        return f.Execute(input)
+        out = f.Execute(input)
+        return out
 
