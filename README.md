@@ -19,6 +19,16 @@ In other words, same image normalized differently gives different radiomics feat
 comparison. With this regards, this code repo aims to provide a user-friendly and standardized way to normalize the 
 images
 
+## Key Functions
+
+This repo aims to maximize the repeatability of the image normalization pipeline, with a focus of MRI. Normalization 
+generally consist of the following steps:
+1. Bias field correction
+1. Align image spacing
+1. Outlier removal   
+1. Intensity normalization
+1. Binning
+
 # Requirements
 
 - SimpleITK >= 2.1.0
@@ -44,8 +54,8 @@ G = MNTSFilterGraph()
 
 # Add filter nodes to the graph.
 G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
-G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
-G.add_node(ZScoreNorm(), [0, 1])
+G.add_node(OtsuTresholding(), 0)    # Use mask to better match the histograms, upstream is spatial norm (0)
+G.add_node(ZScoreNorm(), [0, 1])    # Upstream is spatial norm and Otsu ([0, 1]).
 G.add_node(RangeRescale(0, 5000), [2,1], is_exit=True) # Label this as the output node
 
 # Plot and show the graph
@@ -70,3 +80,12 @@ eg_output = Path(r"./example_data/output/EG_03.nii.gz")
 eg_output.parent.mkdir(parents=True, exist_ok=True)
 sitk.WriteImage(im, eg_output.resolve().__str__())
 ```
+
+#TODO
+
+- [ ] Training required filters
+- [ ] Spatial resample only for segmentation images using the same graph
+- [ ] Image registration 
+- [ ] Graph label the filter names
+- [ ] Overflow protection for some function
+- [ ] MRI bias field correction
