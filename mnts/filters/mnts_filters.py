@@ -6,7 +6,7 @@ import numpy as np
 import multiprocessing as mpi
 
 from ..mnts_logger import MNTSLogger
-from typing import Union, Iterable, List
+from typing import Union, Iterable, List, Any
 from pathlib import Path
 from cachetools import cached, LRUCache
 from copy import deepcopy
@@ -122,6 +122,8 @@ class MNTSFilterGraph(object):
     @nodes.setter
     def nodes(self, nodes):
         r"""
+        Setting the nodes.
+
         .. warning::
             This method will clear all the nodes and edges. Set the nodes before you set the edges!
         """
@@ -135,7 +137,23 @@ class MNTSFilterGraph(object):
     def edges(self):
         return self._graph.edges
 
-    def _node_search(self, attr_key, attr_val):
+    def _node_search(self,
+                     attr_key: str,
+                     attr_val: Any) -> List[int]:
+        r"""
+        Search for node where its attribute with key:`attr_key` equal `attr_val`. There could be multiple nodes that
+        fits the search so output is always a list.
+
+        Args:
+            attr_key (str):
+                The key of the attribute.
+            attr_val (Any):
+                The value used as searching parameter.
+
+        Returns:
+            out (list of int):
+                The list of nodes that fits the search criteria.
+        """
         out = []
         for n, v in self.nodes.data(attr_key):
             if v == attr_val:
@@ -157,6 +175,10 @@ class MNTSFilterGraph(object):
 
         Exit nodes, where marks the end of the normalization pipeline must be labeled using `is_exit` argument.
 
+        .. note::
+            The order of `upstream` is important and decides the argument order when inputs are required from the
+            upstream.
+
         Args:
             node (MNTSFilter):
                 The filter that is to be put into the list. Note that filter cannot be reused as it forms looped
@@ -164,6 +186,7 @@ class MNTSFilterGraph(object):
             upstream (MNTSFitler or int or list(MNTSFitler or int)):
                 The upstream source of data of this node. Permit multiple upstream, however, one node cannot have
                 more than one downstream.
+
         """
         assert isinstance(node, MNTSFilter), f"Wrong input type: {node}"
 
@@ -275,21 +298,21 @@ class MNTSFilterGraph(object):
         Call the `train` method with *args passed to the methods. This method process one input at a time, thus, need
         to call this repeatedly to fully prepare the files.
 
-        Folder structure of the intermediate files
+        Example of folder structure of the intermediate files
         .
         └── working_dir/
             └── temp_file_dir/
-                ├── trained_node_A/
-                │   ├── upstream_node_A1/
+                ├── 5_trained_node/
+                │   ├── 3_upstream_node/
                 │   │   ├── output_1
                 │   │   ├── output_2
                 │   │   └── ...
-                │   └── upstream_node_A2/
+                │   └── 2_upstream_node/
                 │       ├── output_1
                 │       ├── output_2
                 │       └── ...
-                └── trained_node_B/
-                    └── upstream_node_B1/
+                └── 6_trained_node_B/
+                    └── 3_upstream_node/ # Same upstream node will make duplications
                         ├── output_1
                         ├── output_2
                         └── ...
@@ -320,7 +343,7 @@ class MNTSFilterGraph(object):
         for n in nodelist:
             # Create directories first
             n = cls_obj._node_search('filter', n) if isinstance(n, MNTSFilter) else n
-            node_name = cls_obj.nodes[n]['filter'].get_name() + f"_{n}"
+            node_name = f"{n}_" + cls_obj.nodes[n]['filter'].get_name()
             node_dir = temp_dir.joinpath(f"{node_name}/")
             if not node_dir.is_dir():
                 node_dir.mkdir(exist_ok=True, parents=True) # sometimes mpi will mkdir a few times, exist_ok to
@@ -329,7 +352,7 @@ class MNTSFilterGraph(object):
             # Get upstream nodes
             u_nodes = [x[0] for x in cls_obj._graph.in_edges(n)]
             for u_node in u_nodes:
-                u_node_name = cls_obj.nodes[u_node]['filter'].get_name() + f"_{u_node}"
+                u_node_name = f"{u_node}_" + cls_obj.nodes[u_node]['filter'].get_name()
                 u_node_dir = node_dir.joinpath(f"{u_node_name}/")
                 if not u_node_dir.is_dir():
                     u_node_dir.mkdir(exist_ok=True, parents=True)
