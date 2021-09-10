@@ -361,6 +361,47 @@ class MNTSFilterGraph(object):
                 out_name = u_node_dir.joinpath(f"{output_prefix}")
                 sitk.WriteImage(out[u_node], str(out_name.with_suffix('.nii.gz')))
 
+    def train_node(self,
+                   nodelist: List[Union[int, MNTSFilter]],
+                   training_inputs: Union[str, Path]):
+
+        input_path = Path(training_inputs).resolve()
+        assert input_path.is_dir(), f"Cannot open training inputs at {input_path.__str__()}"
+        if not isinstance(nodelist, (list, tuple)):
+            nodelist = [nodelist]
+
+        out = {}
+        # Collect list of training inputs first.
+        for n in nodelist:
+            trained_node = self._node_search('filter', n) if isinstance(n, MNTSFilter) else n
+            trained_node_filter = self.nodes[n]['filter']
+            trained_node_name = f"{n}_" + trained_node_filter.get_name()
+            # check if the target node is trainable
+            if not isinstance(trained_node_filter, MNTSFilterRequireTraining):
+                raise ArithmeticError(f"Specified node {trained_node_name} is not trainable.")
+
+            trained_node_files_dir = input_path.joinpath(trained_node_name)
+            if not trained_node_files_dir.is_dir():
+                msg = f"Cannot open directory for training node {trained_node_name} at: " \
+                      f"{trained_node_files_dir.resolve().__str__()}"
+                raise IOError(msg)
+
+            u_nodes = [nn[0] for nn in self._graph.in_edges(n)]
+            u_nodes_files = []
+            for u_node in u_nodes:
+                u_node_name = f"{u_node}_" + self.nodes[u_node]['filter'].get_name()
+                u_node_dir = trained_node_files_dir.joinpath(u_node_name)
+                if not u_node_dir.is_dir():
+                    msg = f"Cannot open directory for training node {u_node_name} at: " \
+                          f"{u_node_dir.resolve().__str__()}"
+                    raise IOError(msg)
+
+                u_nodes_files.append([str(r.resolve()) for r in u_node_dir.iterdir()
+                                      if r.name.find('nii') != -1])
+            trained_node_filter.train(*u_nodes_files)
+        return out
+
+
     def __deepcopy__(self, memodict={}):
         r"""
         Note that every thing is copied except for the logger and the graph because deepcopying existing
