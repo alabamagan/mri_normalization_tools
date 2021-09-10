@@ -1,5 +1,6 @@
 import SimpleITK as sitk
 import numpy as np
+from pathlib import Path
 from typing import Union, Tuple, List
 from .linear_rescale import LinearRescale
 
@@ -21,8 +22,11 @@ class ZScoreNorm(LinearRescale):
         super(ZScoreNorm, self).__init__(0, 1.)
 
     def _filter(self,
-               input: sitk.Image,
-               mask: sitk.Image = None):
+               input: Union[str, Path, sitk.Image],
+               mask: Union[str, Path, sitk.Image] = None):
+        input = self.read_image(input)
+        mask = self.read_image(input)
+
         if not mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
             input_mean = np_im[np_mask != 0].mean()

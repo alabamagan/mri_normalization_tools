@@ -1,4 +1,5 @@
 import SimpleITK as sitk
+from pathlib import Path
 from typing import Union, Tuple
 from ..mnts_filters import MNTSFilter
 from .intensity_base import MNTSIntensityBase
@@ -24,7 +25,9 @@ class OtsuTresholding(MNTSIntensityBase, MNTSFilter):
     def closing_kernel_size(self, val):
         return self._closing_kernel_size
 
-    def _filter(self, input:sitk.Image) -> sitk.Image:
+    def _filter(self,
+                input: Union[str, Path, sitk.Image]) -> sitk.Image:
+        input = self.read_image(input)
         outmask = sitk.OtsuThreshold(input, 0, 1) # For some reason the official implementation find background
                                                   # instead of foreground, but maybe I am wrong.
         outmask = sitk.Cast(outmask, sitk.sitkUInt8)

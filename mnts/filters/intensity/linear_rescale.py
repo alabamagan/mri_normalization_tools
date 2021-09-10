@@ -1,5 +1,6 @@
 import SimpleITK as sitk
 import numpy as np
+from pathlib import Path
 from typing import Union, Tuple, List
 from ..mnts_filters import MNTSFilter
 from .intensity_base import MNTSIntensityBase
@@ -43,7 +44,12 @@ class LinearRescale(MNTSIntensityBase, MNTSFilter):
     def std(self, std):
         self._std = float(std)
 
-    def _filter(self, input, mask = None):
+    def _filter(self,
+                input: Union[str, Path, sitk.Image],
+                mask: Union[str, Path, sitk.Image] = None):
+        input = self.read_image(input)
+        mask = self.read_image(input)
+
         if mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
 
