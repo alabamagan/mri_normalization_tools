@@ -23,7 +23,7 @@ def mpi_wrapper(func: Callable,
 
     """
     num_worker = int(mpi.cpu_count() if num_worker is None else num_worker)
-    assert num_worker >= 2 or num_worker is None, "Are you kidding me?"
+    assert num_worker >= 2, "Are you kidding me?"
 
     logger = MNTSLogger['MPI']
     pool = Pool.ThreadPool(num_worker)

@@ -34,24 +34,24 @@ def getCdf(hist):
 
 def getPercentile(cdf, bins, perc):
     """
-        Given a cumulative distribution function obtained from a histogram,
-        (where 'bins' are the x values of the histogram and 'cdf' is the
-        cumulative distribution function of the original histogram), it returns
-        the x center value for the bin index corresponding to the given percentile,
-        and the bin index itself.
+    Given a cumulative distribution function obtained from a histogram,
+    (where 'bins' are the x values of the histogram and 'cdf' is the
+    cumulative distribution function of the original histogram), it returns
+    the x center value for the bin index corresponding to the given percentile,
+    and the bin index itself.
 
-        Example:
+    Example:
 
-            import numpy as np
-            hist = np.array([204., 1651., 2405., 1972., 872., 1455.])
-            bins = np.array([0., 1., 2., 3., 4., 5., 6.])
-
-            cumHist = getCdf(hist)
-            self._logger.info cumHist
-            val, bin = getPercentile(cumHist, bins, 50)
-
-            self._logger.info "Val = " + str(val)
-            self._logger.info "Bin = " + str(bin)
+        >>> import numpy as np
+        >>> hist = np.array([204., 1651., 2405., 1972., 872., 1455.])
+        >>> bins = np.array([0., 1., 2., 3., 4., 5., 6.])
+        >>>
+        >>> cumHist = getCdf(hist)
+        >>> self._logger.info cumHist
+        >>> val, bin = getPercentile(cumHist, bins, 50)
+        >>>
+        >>> self._logger.info "Val = " + str(val)
+        >>> self._logger.info "Bin = " + str(bin)
 
     """
     b = len(bins[1:][cdf <= perc])

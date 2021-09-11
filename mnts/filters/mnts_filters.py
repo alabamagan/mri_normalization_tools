@@ -357,6 +357,7 @@ class MNTSFilterGraph(object):
                 if not u_node_dir.is_dir():
                     u_node_dir.mkdir(exist_ok=True, parents=True)
 
+                # Get output from these upstream nodes and save them into corresponding temp folders
                 out = cls_obj.execute(*args, force_request=u_node)
                 out_name = u_node_dir.joinpath(f"{output_prefix}")
                 sitk.WriteImage(out[u_node], str(out_name.with_suffix('.nii.gz')))
@@ -364,6 +365,9 @@ class MNTSFilterGraph(object):
     def train_node(self,
                    nodelist: List[Union[int, MNTSFilter]],
                    training_inputs: Union[str, Path]):
+        r"""
+        
+        """
 
         input_path = Path(training_inputs).resolve()
         assert input_path.is_dir(), f"Cannot open training inputs at {input_path.__str__()}"
@@ -386,6 +390,8 @@ class MNTSFilterGraph(object):
                       f"{trained_node_files_dir.resolve().__str__()}"
                 raise IOError(msg)
 
+            # Get upsteam nodes from which the training images are prepared by
+            # calling `self.prepare_training_files`.
             u_nodes = [nn[0] for nn in self._graph.in_edges(n)]
             u_nodes_files = []
             for u_node in u_nodes:
