@@ -1,4 +1,4 @@
-from .mnts_filters import MNTSFilter
+from .mnts_filters import *
 import SimpleITK as sitk
 
 __all__ = ["TypeCastNode"]
@@ -6,7 +6,8 @@ __all__ = ["TypeCastNode"]
 class DataNode(MNTSFilter):
     r"""
     Presents whatever data stored in this node. This is useful for storing intermediate results, or other data that
-    are repeatedly accessed without the need of re-computing.
+    are repeatedly accessed without the need of re-computing. This can be used as the entrance node in the directed
+    graphs. See :class:`MNTSFilterGraph` for more.
     """
     def __init__(self, data=None):
         super(DataNode, self).__init__()
@@ -29,7 +30,8 @@ class DataNode(MNTSFilter):
 
 class TypeCastNode(MNTSFilter):
     r"""
-    Cast the type to specific datatype using sitk.Cast
+    Cast the type to specific datatype using sitk.Cast. However, you are recommended to keep a clear track of the type
+    casting within a pipeline or a graph.
     """
     def __init__(self,
                  target_type: int = sitk.sitkInt16):

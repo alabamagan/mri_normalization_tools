@@ -332,7 +332,8 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
         self._logger.info(f"MEAN LANDMARKS: ")
         self._logger.info(f"\n{pprint.pformat(self._mean_landmarks)}")
 
-    def save_state(self, location):
+    def save_state(self,
+                   location: Union[str, Path]):
         """
             Saves the trained model in the specified file location (it adds '.npz' to the filename, so
             do not specify the extension). To load it, you can use:
@@ -342,6 +343,10 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
             :param location Absolute path corresponding to the output file. It adds '.npz' to the filename, so
                             do not specify the extension (e.g. /path/to/file)
         """
+        location = Path(location)
+        super(NyulNormalizer, self).save_state(location)
+
+
         trainedModel = {
             'lower_origin': self._lower_origin,
             'upper_origin': self._upper_origin,
@@ -350,18 +355,22 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
             'numPoints': self._num_features_points,
             'meanLandmarks': self._mean_landmarks
         }
-        np.savez(location, trainedModel=[trainedModel])
-        self._logger.info("Model saved at: " + location)
+        np.savez(location.with_suffix('.npz'), trainedModel=[trainedModel])
+        self._logger.info(f"Model saved at: {location.__str__()}")
 
-    def load_state(self, savedModel):
+    def load_state(self, location):
         """
             Loads a trained model previously saved using:
 
                 nyulNormalizer.saveTrainedModel(outputModel)
 
-            :param savedModel Absolute path (including extension) to the "npz" file with the corresponding learned landmarks.
+            :param location Absolute path (including extension) to the "npz" file with the corresponding learned
+            landmarks.
         """
-        f = np.load(savedModel, allow_pickle=True)
+        location = location.with_suffix('.npz')
+        super(NyulNormalizer, self).load_state(location)
+
+        f = np.load(location, allow_pickle=True)
         tModel = f['trainedModel'].all()
 
         self._lower_origin = tModel['lower_origin']
@@ -468,10 +477,17 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
     def _filter(self,
                 input: sitk.Image,
                 mask: sitk.Image = None):
+        input = self.read_image(input)
+        mask = self.read_image(mask)
+
+        if self._mean_landmarks is None:
+            self.error("This node was no trained.")
+            return
+
         # Cast to float if it wasn't already float
         if not input.GetPixelID() in [sitk.sitkFloat32, sitk.sitkFloat64]:
             self._logger.warning("Casting image to float!")
-            sitk.Cast(input, sitk.stikFloat32)
+            sitk.Cast(input, sitk.sitkFloat32)
         return self.transform(input, mask)
 
 

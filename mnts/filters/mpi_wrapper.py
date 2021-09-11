@@ -12,6 +12,9 @@ def mpi_wrapper(func: Callable,
                 num_worker: int = None):
     r"""
 
+    .. warning::
+        This wrapper does not manage memory usage for you so beware.
+
     Args:
         func (callable):
             Class function could work here.

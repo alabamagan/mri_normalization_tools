@@ -57,19 +57,32 @@ class MNTSFilter(object):
 class MNTSFilterRequireTraining(MNTSFilter):
     def __init__(self):
         r"""
-        Base class of filter
+        Base class of filters that require training.
         """
         super(MNTSFilterRequireTraining, self).__init__()
 
     @abstractmethod
-    def train(self, *args, **kwargs):
-        pass
+    def train(self, *args, **kwargs) -> object:
+        raise NotImplementedError()
 
-    def save_state(self):
-        pass
+    @abstractmethod
+    def save_state(self, path: Union[str, Path], with_suffix=None):
+        location = Path(path)
+        if location.exists():
+            self._logger.warning(f"Found existing saved states at {location.resolve().__str__()}, tyring to cover it.")
+            if location.is_dir():
+                raise IOError(f"Recieved directory {path.__str__()} as argument.")
 
-    def load_state(self):
-        pass
+        # Create parent directory if not exist.
+        if not location.parent.is_dir():
+            self._logger.warning(f"Creating directory at {location.parent.resolve().__str__()}")
+            location.parent.mkdir(parents=True, exist_ok=True)
+
+    @abstractmethod
+    def load_state(self, path):
+        path = Path(path)
+        if not path.exists():
+            raise IOError(f"Cannot load state from {path.resolve().__str__()}")
 
 
 class MNTSFilterPipeline(list):
@@ -364,22 +377,33 @@ class MNTSFilterGraph(object):
 
     def train_node(self,
                    nodelist: List[Union[int, MNTSFilter]],
-                   training_inputs: Union[str, Path]):
+                   training_inputs: Union[str, Path],
+                   save_dir: Union[str, Path]) -> None:
         r"""
-        
+        This method trains the selected node(s). Must call `pre_prepare_training_files` before if this node is not an
+        entrance node. If it is an entrance node, train the node separately it self. Contrary, you can also make use of
+        the `DataNode` to make this api work.
+
+        The trained states will be saved by passing the path:
+            Path(save_dir).joinpath([node_index]_[node_name])
+
+        See Also:
+            :class:`MNTSFilterRequireTraining`
+
         """
 
         input_path = Path(training_inputs).resolve()
         assert input_path.is_dir(), f"Cannot open training inputs at {input_path.__str__()}"
         if not isinstance(nodelist, (list, tuple)):
             nodelist = [nodelist]
+        self._logger.info(f"Start training nodes.")
 
-        out = {}
         # Collect list of training inputs first.
         for n in nodelist:
             trained_node = self._node_search('filter', n) if isinstance(n, MNTSFilter) else n
             trained_node_filter = self.nodes[n]['filter']
             trained_node_name = f"{n}_" + trained_node_filter.get_name()
+            self._logger.info(f"Training {trained_node_name}")
             # check if the target node is trainable
             if not isinstance(trained_node_filter, MNTSFilterRequireTraining):
                 raise ArithmeticError(f"Specified node {trained_node_name} is not trainable.")
@@ -402,16 +426,38 @@ class MNTSFilterGraph(object):
                           f"{u_node_dir.resolve().__str__()}"
                     raise IOError(msg)
 
+                # append the gloobed files.
                 u_nodes_files.append([str(r.resolve()) for r in u_node_dir.iterdir()
                                       if r.name.find('nii') != -1])
             trained_node_filter.train(*u_nodes_files)
-        return out
+            trained_node_filter.save_state(save_dir.joinpath(trained_node_name))
+
+    def load_node_states(self,
+                         nodelist: List[Union[int, MNTSFilter]],
+                         save_dir: Union[str, Path]):
+        save_dir = Path(save_dir)
+        if not save_dir.is_dir():
+            raise IOError(f"Cannot open directory to load the states, got {save_dir}")
+        if not isinstance(nodelist, (list, tuple)):
+            nodelist = [nodelist]
+
+        self._logger.info(f"Loading state from {save_dir}.")
+        for n in nodelist:
+            trained_node = self._node_search('filter', n) if isinstance(n, MNTSFilter) else n
+            trained_node_filter = self.nodes[n]['filter']
+            trained_node_name = f"{n}_" + trained_node_filter.get_name()
+            # check if the target node is trainable
+            if not isinstance(trained_node_filter, MNTSFilterRequireTraining):
+                raise ArithmeticError(f"Specified node {trained_node_name} is not trainable.")
+
+            self._logger.info(f"Loading state for: {trained_node_name}")
+            trained_node_filter.load_state(save_dir.joinpath(trained_node_name))
 
 
     def __deepcopy__(self, memodict={}):
         r"""
-        Note that every thing is copied except for the logger and the graph because deepcopying existing
-        graph that has attributes is problematic given they are filters.
+        Note that every thing is copied except for the logger and the graph because deepcopying with the graph will
+        make this object unable to be pickled by multi-processing APIs.
 
         This might be solvable through implementing __deepcopy__ for the filters.
         """
