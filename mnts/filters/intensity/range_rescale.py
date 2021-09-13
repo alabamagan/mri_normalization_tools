@@ -32,9 +32,17 @@ class RangeRescale(MNTSIntensityBase, MNTSFilter):
     def min(self):
         return self._min
 
+    @min.setter
+    def min(self, val):
+        self._min = float(val)
+
     @property
     def max(self):
         return self._max
+
+    @property
+    def max(self, val):
+        self._max = float(val)
 
     @property
     def quantiles(self):
