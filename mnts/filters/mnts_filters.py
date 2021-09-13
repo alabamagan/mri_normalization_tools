@@ -248,7 +248,7 @@ class MNTSFilterGraph(object):
         cur_filter = self.nodes[node_id]['filter']
         if not node_id in self._entrance:
             data = [self._request_output(i) for i in upstream_nodes]
-            self._logger.info(f"Finished step: {self._nodemap[node_id]}")
+            self._logger.info(f"Executing step: {self._nodemap[node_id]}")
             if self._nodes_cache.get(node_id, None) is not None: # put this in cache if used many times
                 return self._nodes_cache[node_id]
             elif node_id in self._nodes_cache:
@@ -258,7 +258,7 @@ class MNTSFilterGraph(object):
                 return cur_filter(*data)
         else:
             # If it an entrance node, acquire input from dictionary.
-            self._logger.info(f"Finished step: {self._nodemap[node_id]}")
+            self._logger.info(f"Executing step: {self._nodemap[node_id]}")
             return cur_filter(self._inputs[node_id])
 
     def plot_graph(self):
@@ -461,8 +461,8 @@ class MNTSFilterGraph(object):
                          nodelist: List[Union[int, MNTSFilter]],
                          save_dir: Union[str, Path]):
         save_dir = Path(save_dir)
-        if not save_dir.is_dir():
-            raise IOError(f"Cannot open directory to load the states, got {save_dir}")
+        if not save_dir.exists() :
+            raise IOError(f"Cannot open directory/file to load the states, got {save_dir}")
         if not isinstance(nodelist, (list, tuple)):
             nodelist = [nodelist]
 
@@ -476,7 +476,10 @@ class MNTSFilterGraph(object):
                 raise ArithmeticError(f"Specified node {trained_node_name} is not trainable.")
 
             self._logger.info(f"Loading state for: {trained_node_name}")
-            trained_node_filter.load_state(save_dir.joinpath(trained_node_name))
+            if save_dir.is_dir():
+                trained_node_filter.load_state(save_dir.joinpath(trained_node_name))
+            elif save_dir.is_file():
+                trained_node_filter.load_state(save_dir)
 
 
     def __deepcopy__(self, memodict={}):

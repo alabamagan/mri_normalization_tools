@@ -78,7 +78,7 @@ class N4ITKBiasFieldCorrection(MNTSIntensityBase, MNTSFilter):
 
         # Corrector require float input.
         if not input.GetPixelID() in [sitk.sitkFloat32, sitk.sitkFloat64]:
-            input = sitk.Cast(input, sitk.Float)
+            input = sitk.Cast(input, sitk.sitkFloat32)
 
         # Shrink input & mask by a factor of 2 to save computational time
         shrinked = sitk.Shrink(input, [2] * input.GetDimension())
@@ -91,5 +91,7 @@ class N4ITKBiasFieldCorrection(MNTSIntensityBase, MNTSFilter):
         corrector.Execute(shrinked, shirinked_mask)
 
         log_bias_field = corrector.GetLogBiasFieldAsImage(input)
+        if not log_bias_field.GetPixelID() == input.GetPixelID():
+            log_bias_field = sitk.Cast(log_bias_field, input.GetPixelID())
         self._last_bias_field = log_bias_field
         return input / sitk.Exp(log_bias_field)

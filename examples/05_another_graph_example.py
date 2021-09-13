@@ -20,8 +20,24 @@ if __name__ == '__main__':
     G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
     G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
     G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
-    G.add_node(NyulNormalizer(), [2, 1])
-    G.add_node(RangeRescale(0, 5000, [0.05, 0.95]), [3,1], is_exit=True) # Label this as the
+    G.add_node(NyulNormalizer(), [2, 1], is_exit=True)
 
+    # Plot the graph
     G.plot_graph()
     plt.show()
+
+    # Borrow the trained features, please run example 04 if this reports error.
+    state_path = Path(r'./example_data/output/.EG_04_temp/EG_04_States/2_NyulNormalizer.npz')
+    G.load_node_states(3, state_path)
+
+    # Write output images
+    image_folder = Path(r'./example_data')
+    images = [f for f in image_folder.iterdir() if f.name.find('nii') != -1]
+    out_names = [f.name for f in images]
+    output_save_dir = Path(r'./example_data/output/EG_05')
+    output_save_dir.mkdir(parents=True, exist_ok=True)
+    for im in images:
+        save_im = G.execute(im)
+        fname = output_save_dir.joinpath(im.name).resolve().__str__()
+        print(f"Saving to {fname}")
+        sitk.WriteImage(save_im[3], fname)
