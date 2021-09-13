@@ -88,8 +88,11 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
         lower_origin:
 
         upper_origin:
+
         lower_target:
+
         upper_target:
+
         num_features_points:
 
 

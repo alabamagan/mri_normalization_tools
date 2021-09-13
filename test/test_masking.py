@@ -5,19 +5,15 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-t = ZScoreNorm()
-G = MNTSFilterGraph()
-G.add_node(SpatialNorm(out_spacing=1))
-G.add_node(OtsuTresholding(), 0)
-G.add_node(ZScoreNorm(), [0, 1])
-G.add_node(RangeRescale(0, 5000), [2,1], True)
-G.plot_graph()
-plt.show()
+from netgraph import Graph
 
-image = sitk.ReadImage(r"Z:\Shared\2.Projects\8.NPC_Segmentation\0A.NIFTI_ALL\Malignant\CE-T1WFS_TRA\726-T1FS+C_TRA.nii.gz")
-x = G.execute(image)
-# # x = Z.filter(image)
-# # sitk.WriteImage(x, r"D:\temp\diudiu.nii.gz")
-sitk.WriteImage(sitk.Cast(x[3], sitk.sitkUInt16), r"D:\temp\diudiu.nii.gz")
-# #TODO: Keep original datatype?
-# #TODO: Keep original slice thickness!!!
+G = nx.DiGraph()
+G.add_nodes_from([0, 1, 2, 3, 4])
+G.add_edges_from([(0, 1),
+                  (1, 2),
+                  (0, 2),
+                  (1, 3),
+                  (3, 4)])
+Graph(graph=G, arrows=True, node_layout='dot', node_labels=True,
+      node_label_fontdict={'size':14}, node_label_offset=0.1)
+plt.show()

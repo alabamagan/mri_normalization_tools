@@ -4,6 +4,7 @@ from mnts.filters.mnts_filters import MNTSFilterGraph
 import networkx as nx
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
+from pathlib import Path
 
 # Create the normalization graph.
 G = MNTSFilterGraph()
@@ -26,7 +27,7 @@ im = sitk.ReadImage(eg_input.resolve().__str__())
 orig_dtype = im.GetPixelID()
 
 # Execute the graph
-im = G.execute(im)
+im = G.execute(im)[3] # node 3 is the only output node.
 
 # Cast the image back into its original datatype
 im = sitk.Cast(im, orig_dtype)

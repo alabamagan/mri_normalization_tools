@@ -51,8 +51,8 @@ class MNTSFilter(object):
         return self.filter(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.__class__.__name__}: \n\t" + \
-               '\n\t'.join(["{: >10}: {}".format(item[0], item[1]) for item in self.get_all_properties()])
+        return f"{self.__class__.__name__}: \n" + "-" * (len(self.__class__.__name__)+1) + \
+               '\n\t' + '\n\t'.join(["{: >20}: {}".format(item[0], item[1]) for item in self.get_all_properties()])
 
 class MNTSFilterRequireTraining(MNTSFilter):
     def __init__(self):
@@ -262,9 +262,32 @@ class MNTSFilterGraph(object):
             return cur_filter(self._inputs[node_id])
 
     def plot_graph(self):
+        import matplotlib.pyplot as plt
+        from netgraph import Graph
         #TODO: write this nodemap as the legend of the graph.
         print(self._nodemap)
-        nx.draw(self._graph, with_labels=True)
+        # nx.draw(self._graph, with_labels=True)
+
+        nodes_color = {}
+        for n in self.nodes:
+            if n in self._entrance:
+                nodes_color[n] = 'tab:green'
+            elif n in self._exits:
+                nodes_color[n] = 'tab:blue'
+            else:
+                nodes_color[n] = 'white'
+
+        nodes_label = {n: f'{n}: {self._nodemap[n]}' for n in self._nodemap}
+
+        try:
+            Graph(graph=self._graph, arrows=True, node_layout='dot', node_labels=nodes_label,
+                  node_label_fontdict={'size':9}, node_label_offset=0.1, node_color=nodes_color)
+        except AttributeError:
+            msg = f"Cannot plot using Sugiyama layout, retreating to spring."
+            self._logger.warning(msg, no_repeat=True)
+            Graph(graph=self._graph, arrows=True, node_layout='spring', node_labels=nodes_label,
+                  node_label_fontdict={'size': 8}, node_label_offset=0.1, node_color=nodes_color)
+
 
     def execute(self,
                 *args,
@@ -391,7 +414,6 @@ class MNTSFilterGraph(object):
             :class:`MNTSFilterRequireTraining`
 
         """
-
         input_path = Path(training_inputs).resolve()
         assert input_path.is_dir(), f"Cannot open training inputs at {input_path.__str__()}"
         if not isinstance(nodelist, (list, tuple)):
@@ -430,7 +452,10 @@ class MNTSFilterGraph(object):
                 u_nodes_files.append([str(r.resolve()) for r in u_node_dir.iterdir()
                                       if r.name.find('nii') != -1])
             trained_node_filter.train(*u_nodes_files)
-            trained_node_filter.save_state(save_dir.joinpath(trained_node_name))
+            trained_state_path = save_dir.joinpath(trained_node_name)
+            trained_node_filter.save_state(trained_state_path)
+            self._logger.info(f"Saving the state for {trained_node_name} to:"
+                              f" {str(trained_state_path)}")
 
     def load_node_states(self,
                          nodelist: List[Union[int, MNTSFilter]],
@@ -469,8 +494,11 @@ class MNTSFilterGraph(object):
         return cpyobj
 
     def __str__(self):
-        msg = ""
+        msg = "{:=^25}\n".format("Graph Structure")
         for n in self.nodes:
             u_nodes = [x[1] for x in self._graph.out_edges(n)]
             msg += f"{n: >2}: {self.nodes[n]['filter'].get_name()} -> {u_nodes} \n"
+        msg += "{:=^50}\n".format("Filter Details")
+        for n in self.nodes:
+            msg += str(self.nodes[n]['filter']) + '\n\n'
         return msg

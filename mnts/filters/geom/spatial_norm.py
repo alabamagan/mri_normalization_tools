@@ -20,16 +20,15 @@ class SpatialNorm(MNTSFilter):
     """
     def __init__(self,
                  out_spacing: Union[float, Tuple[float, float, float]] = None,
-                 resampling_method: str = 'linear'):
+                 interpolation_method: str = 'linear'):
         super(SpatialNorm, self).__init__()
         self.out_spacing = out_spacing
-        self._interpolation = sitk.sitkLinear
-
         self._interpolation_names = {
             'linear': sitk.sitkLinear,
             'bspline': sitk.sitkBSpline,
             'nearest': sitk.sitkNearestNeighbor,
         }
+        self._interpolation = self._interpolation_names[interpolation_method]
 
 
     @property
