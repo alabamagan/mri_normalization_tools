@@ -11,7 +11,7 @@ from mnts.filters import mpi_wrapper
 from mnts.filters.intensity import NyulNormalizer
 
 import pprint
-# If this protector is abscent, windows python might go into recursive import loop.
+# If this protector is absent, windows python might go into recursive import loop.
 if __name__ == '__main__':
     # Create the normalization graph.
     G = MNTSFilterGraph()
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     #--------------
     # This zip function accepts a tuple of iterables, different length is allowed.
     # See more in `repeat_zip`.
-    # Arguements of `prepare_training_files` method are:
+    # Arguments of `prepare_training_files` method are:
     #   ([[node(s) to train], [output names], [output_folder(s)], [input_images]])
     z = ([2], out_names, [output_folder], images)
     for args in repeat_zip(*z):
@@ -48,6 +48,7 @@ if __name__ == '__main__':
     """
     Training
     """
+    # Train and save the states.
     G.train_node(2, temp_output_folder, temp_output_folder.joinpath("EG_04_States"))
 
     """
