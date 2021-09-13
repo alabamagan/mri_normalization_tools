@@ -264,8 +264,6 @@ class MNTSFilterGraph(object):
     def plot_graph(self):
         import matplotlib.pyplot as plt
         from netgraph import Graph
-        #TODO: write this nodemap as the legend of the graph.
-        print(self._nodemap)
         # nx.draw(self._graph, with_labels=True)
 
         nodes_color = {}

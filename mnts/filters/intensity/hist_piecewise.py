@@ -7,7 +7,6 @@ import time
 
 import SimpleITK as sitk
 import numpy as np
-import matplotlib.pyplot as plt
 import multiprocessing as mpi
 from typing import Union, List, Tuple
 from pathlib import Path
@@ -238,16 +237,6 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
         landmarks = [getPercentile(cdfOriginal, bins, self._lower_origin)[0]] + [getPercentile(cdfTruncated, bins, x)[0] for x in
                                                                                  perc] + [
                         getPercentile(cdfOriginal, bins, self._upper_origin)[0]]
-
-        if showLandmarks:
-            yCoord = max(histo)
-            self._logger.info(f"landmarks")
-            plt.figure(dpi=100)
-            plt.plot(bins[:-1], histo)
-            plt.plot([landmarks[0], landmarks[-1]], [yCoord, yCoord], 'r^')
-            plt.plot(landmarks[1:-1], np.ones(len(landmarks) - 2) * yCoord, 'g^')
-            plt.show()
-
         return landmarks
 
     def __landmarksSanityCheck(self, landmarks):
