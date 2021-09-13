@@ -35,6 +35,7 @@ generally consist of the following steps:
 - networkx >= 2.5
 - decorator >= 5.0.7
 - cachetools >=4.2.2
+- netgraph >= 0.7.0
 
 # Examples 
 
