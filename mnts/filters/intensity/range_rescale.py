@@ -40,7 +40,7 @@ class RangeRescale(MNTSIntensityBase, MNTSFilter):
     def max(self):
         return self._max
 
-    @property
+    @max.setter
     def max(self, val):
         self._max = float(val)
 
@@ -49,7 +49,11 @@ class RangeRescale(MNTSIntensityBase, MNTSFilter):
         return self._quantiles
 
     @quantiles.setter
-    def quantiles(self, lower, upper):
+    def quantiles(self, val):
+        if val is None:
+            return
+
+        lower, upper = val
         if lower < upper:
             self._logger.warning("Lower quartile must be smaller than upper quartile, reversing the order to "
                                  f"[{upper} -> {lower}].")
