@@ -2,4 +2,4 @@ SimpleITK >= 2.1.0
 networkx >= 2.5
 decorator >= 5.0.7
 cachetools >=4.2.2
-netgraph >= 4.0.4
+netgraph >= 4.0.5
