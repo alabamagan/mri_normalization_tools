@@ -18,9 +18,19 @@ class SpatialNorm(MNTSFilter):
             Desired uniform spacing. Unit is mm. Use 0 or negative values if spacing is to be kept
 
     """
-    def __init__(self, out_spacing: Union[float, Tuple[float, float, float]] = None):
+    def __init__(self,
+                 out_spacing: Union[float, Tuple[float, float, float]] = None,
+                 resampling_method: str = 'linear'):
         super(SpatialNorm, self).__init__()
         self.out_spacing = out_spacing
+        self._interpolation = sitk.sitkLinear
+
+        self._interpolation_names = {
+            'linear': sitk.sitkLinear,
+            'bspline': sitk.sitkBSpline,
+            'nearest': sitk.sitkNearestNeighbor,
+        }
+
 
     @property
     def out_spacing(self):
@@ -29,6 +39,21 @@ class SpatialNorm(MNTSFilter):
     @out_spacing.setter
     def out_spacing(self, out_spacing: Union[float, Tuple[float, float, float]]):
         self._out_spacing = out_spacing if isinstance(out_spacing, (list, tuple)) else [out_spacing]*3
+
+    @property
+    def interpolation(self):
+        return self._interpolation_names[self._interpolation]
+
+    @interpolation.setter
+    def interpolation(self, val):
+        if isinstance(val, str):
+            self._interpolation = self._interpolation_names.get(val, 'linear')
+        else:
+            self._interpolation = val
+
+        if not self._interpolation in self._interpolation_names.values():
+            raise IndexError(f"Incorrect interpolation scheme specified, possible options are:"
+                             f"{list(self._interpolation_names.keys())}, , got '{val}' instead.")
 
 
     def filter(self,
@@ -50,6 +75,7 @@ class SpatialNorm(MNTSFilter):
         f.SetReferenceImage(input)
         f.SetOutputSpacing(new_spacing.tolist())
         f.SetSize(new_size)
+        f.SetInterpolator(self._interpolation)
         out = f.Execute(input)
         return out
 
