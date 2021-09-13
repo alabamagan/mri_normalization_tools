@@ -20,7 +20,9 @@ if __name__ == '__main__':
     G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
     G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
     G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
-    G.add_node(NyulNormalizer(), [2, 1], is_exit=True)
+    G.add_node(NyulNormalizer(), [2, 1])
+    G.add_node(RangeRescale(0, 5000), 3, is_exit=True)
+    G.add_node(SignalIntensityRebinning(num_of_bins=256), 3, is_exist=True)
 
     # Plot the graph
     G.plot_graph()

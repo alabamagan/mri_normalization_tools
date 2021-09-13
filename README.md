@@ -41,7 +41,7 @@ generally consist of the following steps:
 
 >![Graph](./img/03_graph.png)
 >
->Caption: {0: 'SpatialNorm', 1: 'OtsuTresholding', 2: 'ZScoreNorm', 3: 'RangeRescale'}
+>Caption: Green node is the input node, blue node is the output node.
 ```python
 from mnts.filters.geom import *
 from mnts.filters.intensity import *
@@ -90,4 +90,4 @@ sitk.WriteImage(im, eg_output.resolve().__str__())
 - [ ] Image registration 
 - [x] Graph label the filter names
 - [ ] Overflow protection for some function
-- [ ] MRI bias field correction
+- [x] MRI bias field correction
