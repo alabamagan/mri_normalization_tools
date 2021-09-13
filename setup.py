@@ -1,13 +1,13 @@
 # pip install -e .
 
-from setuptools import setup
+from setuptools import setup, find_packages
 from setuptools.extension import Extension
 import os
 
 setup(
     name='mri-normalization-tools',
     version='0.1',
-    packages=['mnts'],
+    packages=find_packages(),
     url='',
     license='MIT',
     author='ML, Wong',
