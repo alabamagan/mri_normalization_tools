@@ -36,7 +36,7 @@ if __name__ == '__main__':
     # See more in `repeat_zip`.
     # Arguments of `prepare_training_files` method are:
     #   ([[node(s) to train], [output names], [output_folder(s)], [input_images]])
-    z = ([2], out_names, [output_folder], images)
+    z = ([2], out_names, [temp_output_folder], images)
     for args in repeat_zip(*z):
         G.prepare_training_files(*args)
 
