@@ -31,7 +31,6 @@ class SignalIntensityRebinning(MNTSIntensityBase, MNTSFilter):
         self._rrescale = RangeRescale()
         self.num_of_bins = num_of_bins
         self.quantiles = quantiles
-        self.skip_rescale = skip_rescale
 
     @property
     def num_of_bins(self):
