@@ -35,7 +35,6 @@ if __name__ == '__main__':
     # Write output images
     image_folder = Path(r'./example_data')
     images = [f for f in image_folder.iterdir() if f.name.find('nii') != -1]
-    out_names = [f.name for f in images]
     output_save_dir = Path(r'./example_data/output/EG_05')
     output_save_dir.mkdir(parents=True, exist_ok=True)
     for im in images:
