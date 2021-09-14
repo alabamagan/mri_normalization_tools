@@ -1,4 +1,5 @@
 from .mnts_filters import *
+from typing import Any, Optional
 import SimpleITK as sitk
 
 __all__ = ["TypeCastNode"]
@@ -41,6 +42,10 @@ class TypeCastNode(MNTSFilter):
     @property
     def target_type(self):
         return self._target_type
+
+    @target_type.setter
+    def target_type(self, val):
+        self._target_type = val
 
     @property
     def target_type_name(self):
