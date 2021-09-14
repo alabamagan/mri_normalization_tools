@@ -321,6 +321,8 @@ class MNTSFilterGraph(object):
             if isinstance(force_request, MNTSFilter):
                 force_request = self._node_search('filter', force_request)
             output[force_request] = self._request_output(force_request)
+        # Clear cache
+        self._nodes_cache.clear()
         return output
 
     def prepare_training_files(self,
