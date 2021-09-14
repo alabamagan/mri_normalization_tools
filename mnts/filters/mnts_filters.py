@@ -1,5 +1,7 @@
 import copy
+import operator
 from abc import ABCMeta, abstractmethod, abstractproperty
+from audioop import max
 
 import SimpleITK as sitk
 import numpy as np
@@ -8,7 +10,7 @@ import multiprocessing as mpi
 from ..mnts_logger import MNTSLogger
 from typing import Union, Iterable, List, Any
 from pathlib import Path
-from cachetools import cached, LRUCache
+from cachetools import cachedmethod, LRUCache
 from copy import deepcopy
 
 import networkx as nx
@@ -126,7 +128,7 @@ class MNTSFilterGraph(object):
         self._exits = []
         self._logger = MNTSLogger[self.__class__.__name__]
         self._nodemap = {}
-        self._nodes_cache = {}
+        self._nodes_cache = LRUCache(maxsize=8)
 
     @property
     def nodes(self):
@@ -237,6 +239,7 @@ class MNTSFilterGraph(object):
             for us in upstream:
                 self.add_node(node, us)
 
+    @cachedmethod(operator.attrgetter('_nodes_cache'))
     def _request_output(self, node_id):
         r"""
         Use a bottom up request to walk the graph finding the paths and then generate the output. Request are
@@ -303,12 +306,6 @@ class MNTSFilterGraph(object):
 
         """
         assert len(args) == len(self._entrance), "Inputs do not align with number of entrance."
-
-        # mark all nodes with multiple downstreams
-        num_of_downstream = {n: len(self._graph.out_edges(n)) for n in self.nodes}
-        for key in num_of_downstream:
-            if num_of_downstream[key] >= 2:
-                self._nodes_cache[key] = None
 
         self._inputs = {n: args[i] for i, n in enumerate(self._entrance)}
 

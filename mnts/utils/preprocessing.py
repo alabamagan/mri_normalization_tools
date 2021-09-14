@@ -8,7 +8,6 @@ import random
 import argparse
 import pandas as pd
 
-from pytorch_med_imaging.logger import Logger, LogExceptions
 from typing import Optional, Union
 import multiprocessing as mpi
 

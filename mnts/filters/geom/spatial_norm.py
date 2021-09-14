@@ -67,7 +67,7 @@ class SpatialNorm(MNTSFilter):
         new_spacing = np.asarray(self.out_spacing)
         new_spacing[new_spacing <= 0] = original_spacing[new_spacing <=0]
 
-        new_size = np.floor((original_size * original_spacing) / new_spacing).astype('int').tolist()
+        new_size = np.round((original_size * original_spacing) / new_spacing).astype('int').tolist()
         self._logger.info(f"From {original_size} -> {new_size}")
 
         f = sitk.ResampleImageFilter()
