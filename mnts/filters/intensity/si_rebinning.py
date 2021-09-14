@@ -62,6 +62,6 @@ class SignalIntensityRebinning(MNTSIntensityBase, MNTSFilter):
         input = self._rrescale(input)
 
         # images are always casted to UInt16 because UInt8 are considered segmentations in both sitk and this package.
-        return sitk.Cast(input, sitk.UInt16)
+        return sitk.Cast(input, sitk.sitkUInt16)
 
 
