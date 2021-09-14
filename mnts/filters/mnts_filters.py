@@ -8,7 +8,7 @@ import numpy as np
 import multiprocessing as mpi
 
 from ..mnts_logger import MNTSLogger
-from typing import Union, Iterable, List, Any
+from typing import Union, Iterable, List, Any, Dict
 from pathlib import Path
 from cachetools import cachedmethod, LRUCache
 from copy import deepcopy
@@ -289,7 +289,6 @@ class MNTSFilterGraph(object):
             Graph(graph=self._graph, arrows=True, node_layout='spring', node_labels=nodes_label,
                   node_label_fontdict={'size': 8}, node_label_offset=0.1, node_color=nodes_color)
 
-
     def execute(self,
                 *args,
                 force_request: Union[int, MNTSFilter] = None) -> sitk.Image:
@@ -321,6 +320,81 @@ class MNTSFilterGraph(object):
         # Clear cache
         self._nodes_cache.clear()
         return output
+
+    def mpi_execute(self,
+                    output_prefix: Iterable[str],
+                    output_directory: Union[str, Path, List[Union[str, Path]], Dict],
+                    *args) -> None:
+        r"""
+        For use with :func:`mnts.filters.mpi_wrapper`. This copy the MNTSFilterGraph object and call the `execute`
+        method on different inputs. Note that this should be called AFTER the states of the filters are loaded.
+
+
+        The outputs folder structure:
+
+            output_directory_exitnode_1/
+            ├── output_prefix_1.nii.gz
+            ├── output_prefix_2.nii.gz
+            └── ...
+            output_directory_exitnode_2/
+            ├── output_prefix_1.nii.gz
+            ├── output_prefix_2.nii.gz
+            └── ...
+
+        .. note::
+            Use this with :func:`mpi_wrapper` otherwise, just use execute to save some memory
+
+        See Also:
+            * :method:`execute`
+            * :
+
+        Args:
+            output_prefix (list of str):
+                A list of names that will be used to name the outputs.
+            output_directory (list of str):
+                A list of directories corresponds to the number of output nodes in the graph.
+            *args:
+                Arguements that will be passed to :func:`execute`.
+
+        Returns:
+            None
+        """
+        #!! Might get some memory issue here, but should be managible.
+        # Create a copy of this class to separate
+        cls_obj = copy.deepcopy(self)
+
+        # check inputs are properlyspecified.
+        if isinstance(output_directory, (str, Path)):
+            output_directory = [output_directory]
+        # If `output_directory` is list, tuple
+        if isinstance(output_directory, (list, tuple)):
+            if len(output_directory) != len(cls_obj._exits):
+                if len(output_directory) == 1:
+                    _od = Path(output_directory[0])
+                    output_directory = {v: _od.joinpath(self.nodes[v]['filter'].get_name()) for v in self._exits}
+                else:
+                    raise IndexError("The lenth of output directories specified do not match the number of "
+                                     "exit nodes.")
+            else:
+                output_directory = {v: output_directory[n] for n, v in enumerate(self._exits)}
+        elif isinstance(output_directory, dict):
+            if list(output_directory.keys()) != list(self._exits):
+                msg = f"Keys of specified output does not match the exist nodes. " \
+                      f"Got: {output_directory.keys()} and {self._exits}"
+                raise IndexError(msg)
+
+        res = cls_obj.execute(*args)
+        for n in cls_obj._exits:
+            out_d = output_directory[n]
+            self._logger.info(f"{out_d}")
+            if not out_d.exists():
+                out_d.mkdir(parents=True, exist_ok=True)
+
+            # how to name the output?
+            out_im = res[n]
+            out_im_name = out_d.joinpath(output_prefix).resolve().__str__()
+            cls_obj._logger.info(f"Writing to output {out_im_name}")
+            sitk.WriteImage(out_im, str(out_im_name))
 
     def prepare_training_files(self,
                                nodelist: List[Union[int, MNTSFilter]],
@@ -477,7 +551,6 @@ class MNTSFilterGraph(object):
                 trained_node_filter.load_state(save_dir.joinpath(trained_node_name))
             elif save_dir.is_file():
                 trained_node_filter.load_state(save_dir)
-
 
     def __deepcopy__(self, memodict={}):
         r"""
