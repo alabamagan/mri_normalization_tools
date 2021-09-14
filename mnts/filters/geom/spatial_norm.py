@@ -70,6 +70,10 @@ class SpatialNorm(MNTSFilter):
         new_size = np.round((original_size * original_spacing) / new_spacing).astype('int').tolist()
         self._logger.info(f"From {original_size} -> {new_size}")
 
+        # For segmentation, force to use nearest neighbor to avoid funny results.
+        if input.GetPixelID() == sitk.sitkUInt8:
+            self._interpolation = sitk.sitkNearestNeighbor
+
         f = sitk.ResampleImageFilter()
         f.SetReferenceImage(input)
         f.SetOutputSpacing(new_spacing.tolist())
