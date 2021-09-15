@@ -91,3 +91,4 @@ sitk.WriteImage(im, eg_output.resolve().__str__())
 - [x] Graph label the filter names
 - [ ] Overflow protection for some function
 - [x] MRI bias field correction
+- [ ] Finish pipeline implementation
