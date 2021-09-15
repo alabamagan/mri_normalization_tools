@@ -38,6 +38,17 @@ class TypeCastNode(MNTSFilter):
                  target_type: int = sitk.sitkInt16):
         self._target_type = target_type
         self._target_type_name = sitk.GetPixelIDValueAsString(self._target_type)
+        self._overflow_protection = {
+            sitk.sitkUInt8:     (0, int(2**8.) - 1),
+            sitk.sitkUInt16:    (0, int(2**16.) - 1),
+            sitk.sitkUInt32:    (0, int(2**32.) - 1),
+            sitk.sitkUInt64:    (0, int(2**64.) - 1),
+            sitk.sitkInt8:      (-int(2**7.), int(2**7.) -1),
+            sitk.sitkInt16:     (-int(2**15.), int(2 ** 15.) - 1),
+            sitk.sitkInt32:     (-int(2**31.), int(2 ** 31.) - 1),
+            sitk.sitkInt64:     (-int(2**63.), int(2 ** 63.) - 1)
+            # Ignore float numbers
+        }
 
     @property
     def target_type(self):
@@ -54,6 +65,10 @@ class TypeCastNode(MNTSFilter):
     def filter(self, input):
         input = self.read_image(input)
         try:
+            # Overflow protection
+            range = self._overflow_protection.get(self.target_type, None)
+            if range is not None:
+                input = sitk.Clamp(*range)
             return sitk.Cast(input, self._target_type)
         except Exception as e:
             raise ArithmeticError(f"Type cast failed in filter with parameters: {self.__str__()}") from e
