@@ -57,9 +57,10 @@ class SignalIntensityRebinning(MNTSIntensityBase, MNTSFilter):
         return self._skip_rescale
 
     def _filter(self,
-                input: Union[str, Path, sitk.Image]) -> sitk.Image:
+                input: Union[str, Path, sitk.Image],
+                mask: Union[str, Path, sitk.Image]=None) -> sitk.Image:
         input = self.read_image(input)
-        input = self._rrescale(input)
+        input = self._rrescale(input, mask)
 
         # images are always casted to UInt16 because UInt8 are considered segmentations in both sitk and this package.
         return sitk.Cast(input, sitk.sitkUInt16)
