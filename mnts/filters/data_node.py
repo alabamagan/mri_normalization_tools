@@ -54,6 +54,6 @@ class TypeCastNode(MNTSFilter):
     def filter(self, input):
         input = self.read_image(input)
         try:
-            return sitk.Cast(self._target_type)
+            return sitk.Cast(input, self._target_type)
         except Exception as e:
             raise ArithmeticError(f"Type cast failed in filter with parameters: {self.__str__()}") from e
