@@ -68,7 +68,7 @@ class TypeCastNode(MNTSFilter):
             # Overflow protection
             range = self._overflow_protection.get(self.target_type, None)
             if range is not None:
-                input = sitk.Clamp(*range)
+                input = sitk.Clamp(input, *range)
             return sitk.Cast(input, self._target_type)
         except Exception as e:
             raise ArithmeticError(f"Type cast failed in filter with parameters: {self.__str__()}") from e

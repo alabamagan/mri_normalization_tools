@@ -70,6 +70,6 @@ class LinearRescale(MNTSIntensityBase, MNTSFilter):
         if input.GetPixelID() not in [8, 9]:
             self._logger.warning("Casting the")
             input = sitk.Cast(input, sitk.sitkFloat32)
-        input = ((input - input_mean) / input_std + self._mean) * out_std
+        input = ((input - input_mean) / input_std ) * out_std + self._mean
         return input
 
