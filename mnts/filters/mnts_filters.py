@@ -42,6 +42,7 @@ class MNTSFilter(object):
     @staticmethod
     def read_image(input: Union[str, Path, sitk.Image]):
         if isinstance(input, (str, Path)):
+            MNTSLogger.global_logger.info(f"Reading image from: {str(input.resolve())}")
             input = sitk.ReadImage(str(input))
 
         if not isinstance(input, sitk.Image):
@@ -128,6 +129,8 @@ class MNTSFilterGraph(object):
         self._exits = []
         self._logger = MNTSLogger[self.__class__.__name__]
         self._nodemap = {}
+        self._output = {}
+        self._nodes_upstream = {}
         self._nodes_cache = LRUCache(maxsize=8)
 
     @property
@@ -216,6 +219,7 @@ class MNTSFilterGraph(object):
 
         if upstream is None:
             self._entrance.append(_node_index)
+            self._nodes_upstream[_node_index] = []
 
         elif isinstance(upstream, MNTSFilter):
             try:
@@ -234,35 +238,41 @@ class MNTSFilterGraph(object):
             # if len(self._graph.out_edges(upstream)) > 0:
             #     raise ArithmeticError(f"Nodes cannot have multiple downstreams: {upstream}")
             self._graph.add_edge(upstream, _node_index)
+            self._nodes_upstream[_node_index] = tuple([upstream])
 
         elif isinstance(upstream, (list, tuple)):
             for us in upstream:
-                self.add_node(node, us)
+                self._graph.add_edge(us, _node_index)
+            self._nodes_upstream[_node_index] = tuple(upstream)
 
     @cachedmethod(operator.attrgetter('_nodes_cache'))
     def _request_output(self, node_id):
         r"""
         Use a bottom up request to walk the graph finding the paths and then generate the output. Request are
         recursively requested to get data from the upstream.
+
+        .. note::
+            `in_edges` method did not always preserve the order of edges by when they were added.
+            E.g., if you add edge (2, 1) then (0, 1), and then call `in_edges`, it could return
+            [(0, 1), (2, 1)] sometimes. This is easy to happen when the _graph is copied using the
+            `deepcopy` method. However, the flow of inputs depends on this order.
         """
-        in_edges = self._graph.in_edges(node_id)
-        upstream_nodes = [t[0] for t in in_edges]
+        upstream_nodes = self._nodes_upstream[node_id]
 
         cur_filter = self.nodes[node_id]['filter']
         if not node_id in self._entrance:
             data = [self._request_output(i) for i in upstream_nodes]
             self._logger.info(f"Executing step: {self._nodemap[node_id]}")
-            if self._nodes_cache.get(node_id, None) is not None: # put this in cache if used many times
-                return self._nodes_cache[node_id]
-            elif node_id in self._nodes_cache:
-                self._nodes_cache[node_id] = cur_filter(*data)
-                return self._nodes_cache[node_id]
-            else:
-                return cur_filter(*data)
+            out = cur_filter(*data)
         else:
             # If it an entrance node, acquire input from dictionary.
             self._logger.info(f"Executing step: {self._nodemap[node_id]}")
-            return cur_filter(self._inputs[node_id])
+            out = cur_filter(self._inputs[node_id])
+
+        # Put this result into output cache because cachetools to save some time.
+        if node_id in self._exits:
+            self._output[node_id] = out
+        return out
 
     def plot_graph(self):
         import matplotlib.pyplot as plt
@@ -308,18 +318,23 @@ class MNTSFilterGraph(object):
 
         self._inputs = {n: args[i] for i, n in enumerate(self._entrance)}
 
+        # Clear cache to avoid messing the results
+        self._output.clear()
+        self._nodes_cache.clear()
+
         # gather_output
-        output = {}
         if force_request is None:
-            for i in self._exits:
-                output[i] = self._request_output(i)
+            for i in reversed(self._exits): # Later exit nodes has more chance to walk through all exit nodes.
+                if i in self._output:
+                    continue
+                else:
+                   self._output[i] = self._request_output(i)
         else:
             if isinstance(force_request, MNTSFilter):
                 force_request = self._node_search('filter', force_request)
-            output[force_request] = self._request_output(force_request)
+            self._output[force_request] = self._request_output(force_request)
         # Clear cache
-        self._nodes_cache.clear()
-        return output
+        return self._output
 
     def mpi_execute(self,
                     output_prefix: Iterable[str],
@@ -560,7 +575,7 @@ class MNTSFilterGraph(object):
         This might be solvable through implementing __deepcopy__ for the filters.
         """
         cpyobj = type(self)()
-        attr_copy = ['_entrance', '_exits', '_nodemap', '_nodes_cache']
+        attr_copy = ['_entrance', '_exits', '_nodemap', '_nodes_upstream']
         for attr in attr_copy:
             cpyobj.__setattr__(attr, deepcopy(self.__getattribute__(attr), memodict))
         cpyobj._graph = self._graph.copy()

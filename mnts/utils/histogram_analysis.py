@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from pathlib import Path
 from typing import Union, Optional, Iterable
+from . import repeat_zip
 import fnmatch
 
 __all__ = ['batch_get_distribtuion', 'plot_hist']
