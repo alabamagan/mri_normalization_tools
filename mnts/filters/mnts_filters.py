@@ -234,9 +234,6 @@ class MNTSFilterGraph(object):
         elif isinstance(upstream, int):
             if not upstream in self.nodes:
                 raise IndexError("Upstream specified not in list.")
-            # Check if upstream node has another downstream, which is forbiddened
-            # if len(self._graph.out_edges(upstream)) > 0:
-            #     raise ArithmeticError(f"Nodes cannot have multiple downstreams: {upstream}")
             self._graph.add_edge(upstream, _node_index)
             self._nodes_upstream[_node_index] = tuple([upstream])
 
