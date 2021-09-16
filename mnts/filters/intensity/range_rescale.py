@@ -57,6 +57,9 @@ class RangeRescale(MNTSIntensityBase, MNTSFilter):
         if lower > upper:
             self._logger.warning("Lower quartile must be smaller than upper quartile, reversing the order to "
                                  f"[{upper} -> {lower}].")
+            _ = lower
+            lower = upper
+            upper = _
         if not (0 <= lower < upper <= 1):
             self._logger.error("Quartile ranges must be within the range 0 to 1. Lower and upper quartile must "
                                "not be identical")
