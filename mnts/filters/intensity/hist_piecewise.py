@@ -315,7 +315,7 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
                 # Add the mapped landmarks to the working set
                 allMappedLandmarks.append(mappedLandmarks)
             except Exception as e:
-                self._logger.error(f"Encounter error when processing {fname}: {e}")
+                self._logger.error(f"Encounter error when processing {fName}: {e}")
                 failed.append(fName)
                 continue
         if not len(failed) == 0:
