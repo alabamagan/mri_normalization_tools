@@ -42,7 +42,7 @@ class MNTSFilter(object):
     @staticmethod
     def read_image(input: Union[str, Path, sitk.Image]):
         if isinstance(input, (str, Path)):
-            MNTSLogger.global_logger.info(f"Reading image from: {str(input.resolve())}")
+            MNTSLogger.global_logger.info(f"Reading image from: {str(input)}")
             input = sitk.ReadImage(str(input))
 
         if not isinstance(input, sitk.Image):
