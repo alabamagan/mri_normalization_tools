@@ -286,32 +286,41 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
 
 
         """
+        failed = []
         allMappedLandmarks = []
         # For each image in the training set
         for fNameIndex in range(len(listOfImages)):
             fName = listOfImages[fNameIndex]
             self._logger.info("Processing: " + fName)
-            # Read the image
-            image = self.read_image(fName)
+            try:
+                # Read the image
+                image = self.read_image(fName)
 
-            if listOfMasks == []:
-                # Generate the landmarks for the current image
-                landmarks = self.__getLandmarks(image)
-            else:
-                mask = sitk.ReadImage(listOfMasks[fNameIndex])
-                landmarks = self.__getLandmarks(image, mask)
+                if listOfMasks == []:
+                    # Generate the landmarks for the current image
+                    landmarks = self.__getLandmarks(image)
+                else:
+                    mask = sitk.ReadImage(listOfMasks[fNameIndex])
+                    landmarks = self.__getLandmarks(image, mask)
 
-            # Check the obtained landmarks ...
-            self.__landmarksSanityCheck(landmarks)
+                # Check the obtained landmarks ...
+                self.__landmarksSanityCheck(landmarks)
 
-            # Construct the linear mapping function
-            mapping = interp1d([landmarks[0], landmarks[-1]], [self.lower_target, self.upper_target], fill_value="extrapolate")
+                # Construct the linear mapping function
+                mapping = interp1d([landmarks[0], landmarks[-1]], [self.lower_target, self.upper_target], fill_value="extrapolate")
 
-            # Map the landmarks to the standard scale
-            mappedLandmarks = mapping(landmarks)
+                # Map the landmarks to the standard scale
+                mappedLandmarks = mapping(landmarks)
 
-            # Add the mapped landmarks to the working set
-            allMappedLandmarks.append(mappedLandmarks)
+                # Add the mapped landmarks to the working set
+                allMappedLandmarks.append(mappedLandmarks)
+            except Exception as e:
+                self._logger.error(f"Encounter error when processing {fname}: {e}")
+                failed.append(fName)
+                continue
+        if not len(failed) == 0:
+            msg = f"The following cases failed: \n" + pprint.pformat(failed)
+            self._logger.warning(msg)
 
         self._logger.info("ALL MAPPED LANDMARKS: ")
         self._logger.info(f"\n{pprint.pformat(allMappedLandmarks)}")
