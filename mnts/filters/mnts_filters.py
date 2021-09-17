@@ -399,6 +399,7 @@ class MNTSFilterGraph(object):
         try:
             if cls_obj.check_output(output_directory, output_prefix):
                 self._logger.info(f"All outputs exist for input {input}, skipping.")
+                return 0
             else:
                 res = cls_obj.execute(*args)
         except Exception as e:
