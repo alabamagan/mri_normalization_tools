@@ -1,5 +1,6 @@
 import copy
 import operator
+import pprint
 from abc import ABCMeta, abstractmethod, abstractproperty
 from audioop import max
 
@@ -395,7 +396,15 @@ class MNTSFilterGraph(object):
                       f"Got: {output_directory.keys()} and {self._exits}"
                 raise IndexError(msg)
 
-        res = cls_obj.execute(*args)
+        try:
+            if cls_obj.check_output(output_directory, output_prefix):
+                self._logger.info(f"All outputs exist for input {input}, skipping.")
+            else:
+                res = cls_obj.execute(*args)
+        except Exception as e:
+            self._logger.error(f"Got unexpected error {e} for input: {pprint.pformat(args)}")
+            return 1
+
         for n in cls_obj._exits:
             out_d = output_directory[n]
             self._logger.info(f"{out_d}")
@@ -407,6 +416,18 @@ class MNTSFilterGraph(object):
             out_im_name = out_d.joinpath(output_prefix).resolve().__str__()
             cls_obj._logger.info(f"Writing to output {out_im_name}")
             sitk.WriteImage(out_im, str(out_im_name))
+        return 0
+
+    def check_output(self, output_directory, output_prefix):
+        r"""
+        Return 1 if all output files exists, and 0 if any is missing.
+        """
+        targets = []
+        for n in self._exits:
+            out_d = output_directory[n]
+            out_im_name = out_d.joinpath(output_prefix).resolve().__str__()
+            targets.append(Path(out_im_name))
+        return all([t.exists() for t in targets])
 
     def prepare_training_files(self,
                                nodelist: List[Union[int, MNTSFilter]],
