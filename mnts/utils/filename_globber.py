@@ -68,7 +68,7 @@ def get_fnames_by_globber(fnames, globber):
     return copy
 
 
-def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None):
+def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None, return_pairs=False):
     source_list = get_fnames_by_globber(os.listdir(source_dir), globber) \
         if not globber is None else os.listdir(source_dir)
     _logger = MNTSLogger['algorithm.utils']
@@ -92,4 +92,10 @@ def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None):
         _logger.debug(f"{missing}")
         raise ValueError("Dimension mismatch! Src: %i vs Target: %i"%(len(source_list), len(target_list)))
 
-    return source_list, target_list
+    pairs = list(zip(source_list, target_list))
+    pairs.sort()
+    if return_pairs:
+        return pairs
+    else:
+        source_list, target_list = zip(*pairs)
+        return source_list, target_list
