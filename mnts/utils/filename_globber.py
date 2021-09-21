@@ -1,45 +1,61 @@
+import pprint
 import re, os
 from ..mnts_logger import MNTSLogger
 
 __all__ = ['get_unique_IDs', 'get_fnames_by_globber', 'get_fnames_by_IDs', 'load_supervised_pair_by_IDs']
 
 
-def get_unique_IDs(fnames, globber=None):
-    idlist = []
+def get_unique_IDs(fnames, globber=None, return_dict=False):
+    iddict = {}
     for f in fnames:
         if globber is None:
             globber = "([0-9]{3,5})"
 
         mo = re.search(globber, f)
         if not mo is None:
-            idlist.append(f[mo.start():mo.end()])
+            id = mo.group()
+            if id in iddict.keys():
+                iddict[id].append(f)
+            else:
+                iddict[id] = [f]
 
-    idlist = list(set(idlist))
-    idlist.sort()
-    return idlist
+    if not return_dict:
+        idlist =list(iddict.keys())
+        idlist.sort()
+        return idlist
+    else:
+        return iddict
 
 
-def get_fnames_by_IDs(fnames, idlist, globber=None):
+
+def get_fnames_by_IDs(fnames, idlist, globber=None, return_dict=False):
     _logger = MNTSLogger['algorithm.utils']
     if globber is None:
         globber = "([0-9]{3,5})"
 
     outfnames = {}
-    for id in idlist:
-        flist = []
-        for f in fnames:
-            _f = os.path.basename(f)
-            l = re.findall(globber, _f)
-            if not len(l):
-                continue
-            if l[0] == id:
-                flist.append(f)
-        # skip if none is found
-        if len(flist) == 0:
-            _logger.warning(f"Can't found anything for key {id}. Skipping..")
+    id_fn_pair = get_unique_IDs(fnames, globber, return_dict=True)
+    ids_in_fn = id_fn_pair.keys()
+
+    id_not_in_fnames = set(ids_in_fn) - set(idlist)
+    if len(id_not_in_fnames) > 0:
+        _logger.warning(f"Cannot find anything for the following ids:\n"
+                        f"{pprint.pformat(id_not_in_fnames)}")
+    overlap = set(ids_in_fn) & set(idlist)
+
+    # Check if there are repeated ids
+    for k, v in id_fn_pair.items():
+        if not k in overlap:
             continue
-        outfnames[id] = flist
-    return outfnames
+        if len(v) > 1:
+            _logger.warning(f"Found more than 1 file for ID: {k}. "
+                            f"Files found are: {v}")
+
+    if return_dict:
+        return {k: id_fn_pair[k] for k in list(overlap)}
+    else:
+        overlap_files = [id_fn_pair[key][0] for key in overlap]
+        return overlap_files
 
 
 def get_fnames_by_globber(fnames, globber):
@@ -57,10 +73,10 @@ def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None):
         if not globber is None else os.listdir(source_dir)
     _logger = MNTSLogger['algorithm.utils']
 
-    source_list = get_fnames_by_IDs(source_list, idlist)
+    source_list = get_fnames_by_IDs(source_list, idlist, globber=globber, return_dict=True)
     source_keys = source_list.keys()
     source_list = [source_list[key][0] for key in source_list]
-    target_list = get_fnames_by_IDs(os.listdir(target_dir), idlist)
+    target_list = get_fnames_by_IDs(os.listdir(target_dir), idlist, globber=globber, return_dict=True)
     target_keys = target_list.keys()
     target_list = [target_list[key][0] for key in source_keys]
 
