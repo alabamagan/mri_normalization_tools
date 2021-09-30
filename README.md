@@ -97,3 +97,5 @@ if __name__ == '__main__':
 - [x] Overflow protection for some function
 - [x] MRI bias field correction
 - [ ] Finish pipeline implementation
+- [ ] MPI examples 
+- [ ] Better documents for usage of dicom2nii
