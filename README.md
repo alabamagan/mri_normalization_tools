@@ -74,7 +74,7 @@ if __name__ == '__main__':
 
     # Borrow the trained features, please run example 04 if this reports error.
     state_path = Path(r'./example_data/output/.EG_04_temp/EG_04_States/2_NyulNormalizer.npz')
-    G.load_node_states(3, state_path)
+    G.load_node_states(3, state_path) # 3 for NyulNormalizer node index
 
     # Write output images
     image_folder = Path(r'./example_data')
@@ -85,7 +85,7 @@ if __name__ == '__main__':
         save_im = G.execute(im)
         fname = output_save_dir.joinpath(im.name).resolve().__str__()
         print(f"Saving to {fname}")
-        sitk.WriteImage(save_im[3], fname)
+        sitk.WriteImage(save_im[4], fname) # RangeRescale output at node index 3
 ```
 
 #TODO
