@@ -106,9 +106,10 @@ class MNTSFilterPipeline(list):
             assert all([isinstance(f, MNTSFilter) for f in args])
 
     def __str__(self):
-        return '->'.join([f.name for f in self])
+        return ' -> '.join([f.name for f in self])
 
     def execute(self, *args):
+        raise NotImplementedError
         for f in iter(self):
             args = f(*args)
             if not isinstance(args, [tuple, list]):
@@ -160,8 +161,8 @@ class MNTSFilterGraph(object):
                      attr_key: str,
                      attr_val: Any) -> List[int]:
         r"""
-        Search for node where its attribute with key:`attr_key` equal `attr_val`. There could be multiple nodes that
-        fits the search so output is always a list.
+        Search for node where its attribute of key:`attr_key` equal `attr_val`. There could be multiple nodes that
+        fits the search so output is always a list unless no node is find, in such case -1 is returned.
 
         Args:
             attr_key (str):
@@ -187,7 +188,7 @@ class MNTSFilterGraph(object):
     def add_node(self,
                  node: MNTSFilter,
                  upstream: Union[None, int, MNTSFilter, Iterable[Union[MNTSFilter, int]]] = None,
-                 is_exit: bool =False):
+                 is_exit: bool =False) -> None:
         r"""
         Add a node to the filter graph and connect it to the upstream nodes. If no upstream nodes are provided this
         node is automatically treated as the input node.
@@ -196,7 +197,7 @@ class MNTSFilterGraph(object):
 
         .. note::
             The order of `upstream` is important and decides the argument order when inputs are required from the
-            upstream.
+            upstream in some filters, such as `NyulNormlize`
 
         Args:
             node (MNTSFilter):
@@ -241,10 +242,12 @@ class MNTSFilterGraph(object):
         elif isinstance(upstream, (list, tuple)):
             for us in upstream:
                 self._graph.add_edge(us, _node_index)
+            # Store the upstream nodes in correct order (`in_edges` method doesn't retain edge order after `deep_copy`)
             self._nodes_upstream[_node_index] = tuple(upstream)
 
     @cachedmethod(operator.attrgetter('_nodes_cache'))
-    def _request_output(self, node_id):
+    def _request_output(self,
+                        node_id: int) -> Any:
         r"""
         Use a bottom up request to walk the graph finding the paths and then generate the output. Request are
         recursively requested to get data from the upstream.
@@ -253,12 +256,14 @@ class MNTSFilterGraph(object):
             `in_edges` method did not always preserve the order of edges by when they were added.
             E.g., if you add edge (2, 1) then (0, 1), and then call `in_edges`, it could return
             [(0, 1), (2, 1)] sometimes. This is easy to happen when the _graph is copied using the
-            `deepcopy` method. However, the flow of inputs depends on this order.
+            `deepcopy` method. However, the flow of inputs depends on this order, so another method
+            is used to find the path and the edges dring input.
         """
         upstream_nodes = self._nodes_upstream[node_id]
 
         cur_filter = self.nodes[node_id]['filter']
         if not node_id in self._entrance:
+            # If not an entrance node, require all inputs from upstream nodes first, than generate output for downstream
             data = [self._request_output(i) for i in upstream_nodes]
             self._logger.info(f"Executing step: {self._nodemap[node_id]}")
             out = cur_filter(*data)
@@ -272,7 +277,17 @@ class MNTSFilterGraph(object):
             self._output[node_id] = out
         return out
 
-    def plot_graph(self):
+    def plot_graph(self) -> None:
+        r"""
+        Plot the filter graph. This function requires `netgraph` package. Input nodes are labelled in green and output
+        nodes are labeled in blue.
+
+        .. note::
+            Although the graph labels tries to avoids edges and node, it still overlap quite often.
+
+        Returns:
+            None
+        """
         import matplotlib.pyplot as plt
         from netgraph import Graph
         # nx.draw(self._graph, with_labels=True)
@@ -289,9 +304,11 @@ class MNTSFilterGraph(object):
         nodes_label = {n: f'{n}: {self._nodemap[n]}' for n in self._nodemap}
 
         try:
+            # In `netgraph` version < 4.0.5, there is a problem with long distance edges in Sugiyama, solved in 4.0.5
             Graph(graph=self._graph, arrows=True, node_layout='dot', node_labels=nodes_label,
                   node_label_fontdict={'size':9}, node_label_offset=0.1, node_color=nodes_color)
         except AttributeError:
+            # Fall back to spring arrangement
             msg = f"Cannot plot using Sugiyama layout, retreating to spring."
             self._logger.warning(msg, no_repeat=True)
             Graph(graph=self._graph, arrows=True, node_layout='spring', node_labels=nodes_label,
