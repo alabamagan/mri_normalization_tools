@@ -39,56 +39,61 @@ generally consist of the following steps:
 
 # Examples 
 
->![Graph](./img/03_graph.png)
+>![Graph](./img/05_graph.png)
 >
 >Caption: Green node is the input node, blue node is the output node.
 ```python
+from pathlib import Path
 from mnts.filters.geom import *
 from mnts.filters.intensity import *
 from mnts.filters.mnts_filters import MNTSFilterGraph
-import networkx as nx
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
-from pathlib import Path
 
-# Create the normalization graph.
-G = MNTSFilterGraph()
+from mnts.utils import repeat_zip
+from mnts.filters import mpi_wrapper
+from mnts.filters.intensity import NyulNormalizer
 
-# Add filter nodes to the graph.
-G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
-G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
-G.add_node(ZScoreNorm(), [0, 1])
-G.add_node(RangeRescale(0, 5000), [2,1], is_exit=True) # Label this as the output node
+import pprint
+# If this protector is absent, windows python might go into recursive import loop.
+if __name__ == '__main__':
+    # Create the normalization graph.
+    G = MNTSFilterGraph()
 
-# Plot and show the graph
-G.plot_graph()
-plt.show()
+    # Add filter nodes to the graph.
+    G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
+    G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
+    G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
+    G.add_node(NyulNormalizer(), [2, 1])
+    G.add_node(RangeRescale(0, 5000), 3, is_exit=True)
+    G.add_node(SignalIntensityRebinning(num_of_bins=256), 3, is_exist=True)
 
-# Load image
-eg_input = Path(r"./example_data/MRI_01.nii.gz")
-if not eg_input.is_file():
-    raise IOError("Error opening example data.")
-im = sitk.ReadImage(eg_input.resolve().__str__())
-orig_dtype = im.GetPixelID()
+    # Plot the graph
+    G.plot_graph()
+    plt.show()
 
-# Execute the graph
-im = G.execute(im)[3] # node 3 is the only output node.
+    # Borrow the trained features, please run example 04 if this reports error.
+    state_path = Path(r'./example_data/output/.EG_04_temp/EG_04_States/2_NyulNormalizer.npz')
+    G.load_node_states(3, state_path)
 
-# Cast the image back into its original datatype
-im = sitk.Cast(im, orig_dtype)
-
-# Save the image
-eg_output = Path(r"./example_data/output/EG_03.nii.gz")
-eg_output.parent.mkdir(parents=True, exist_ok=True)
-sitk.WriteImage(im, eg_output.resolve().__str__())
+    # Write output images
+    image_folder = Path(r'./example_data')
+    images = [f for f in image_folder.iterdir() if f.name.find('nii') != -1]
+    output_save_dir = Path(r'./example_data/output/EG_05')
+    output_save_dir.mkdir(parents=True, exist_ok=True)
+    for im in images:
+        save_im = G.execute(im)
+        fname = output_save_dir.joinpath(im.name).resolve().__str__()
+        print(f"Saving to {fname}")
+        sitk.WriteImage(save_im[3], fname)
 ```
 
 #TODO
 
 - [x] Training required filters
-- [x] Spatial resample only for segmentation images using the same graph (UInt8 image won't be processed)
+- [x] Intensity normalization ignores segmentation (UInt8 image won't be processed, might need `force` option?)
 - [ ] Image registration 
 - [x] Graph label the filter names
-- [ ] Overflow protection for some function
+- [x] Overflow protection for some function
 - [x] MRI bias field correction
 - [ ] Finish pipeline implementation
