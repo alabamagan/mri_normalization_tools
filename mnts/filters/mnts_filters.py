@@ -525,7 +525,7 @@ class MNTSFilterGraph(object):
                    training_inputs: Union[str, Path],
                    save_dir: Union[str, Path]) -> None:
         r"""
-        This method trains the selected node(s). Must call `pre_prepare_training_files` before if this node is not an
+        This method trains the selected node(s). Must call `prepare_training_files` before if this node is not an
         entrance node. If it is an entrance node, train the node separately it self. Contrary, you can also make use of
         the `DataNode` to make this api work.
 
@@ -555,7 +555,8 @@ class MNTSFilterGraph(object):
             trained_node_files_dir = input_path.joinpath(trained_node_name)
             if not trained_node_files_dir.is_dir():
                 msg = f"Cannot open directory for training node {trained_node_name} at: " \
-                      f"{trained_node_files_dir.resolve().__str__()}"
+                      f"{trained_node_files_dir.resolve().__str__()} \n" \
+                      f"Have you ran repare_training_files()?"
                 raise IOError(msg)
 
             # Get upsteam nodes from which the training images are prepared by
@@ -567,7 +568,8 @@ class MNTSFilterGraph(object):
                 u_node_dir = trained_node_files_dir.joinpath(u_node_name)
                 if not u_node_dir.is_dir():
                     msg = f"Cannot open directory for training node {u_node_name} at: " \
-                          f"{u_node_dir.resolve().__str__()}"
+                          f"{u_node_dir.resolve().__str__()}\n" \
+                          f"Have you ran repare_training_files()?"
                     raise IOError(msg)
 
                 # append the gloobed files.
