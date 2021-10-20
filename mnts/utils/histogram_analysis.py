@@ -1,14 +1,12 @@
 import os
 import numpy as np
-import seaborn as sns
 import SimpleITK as sitk
 import multiprocessing as mpi
 from functools import partial
 from tqdm.auto import tqdm
-import matplotlib.pyplot as plt
 
 from pathlib import Path
-from typing import Union, Optional, Iterable
+from typing import Union, Optional, Iterable, Any
 from . import repeat_zip
 import fnmatch
 
@@ -134,12 +132,13 @@ def batch_get_distribtuion(imgs_dir: Union[str, Path, Iterable[Union[str, Path]]
 
 
 def plot_hist(hists: np.ndarray,
-              ax: Optional[plt.Axes] = None,
+              ax: Optional[Any] = None,
               *args,
               **kwargs) -> None:
     r"""
     Plot the histogram obtained from `batch_get_histogram`
     """
+    import matplotlib.pyplot as plt
 
     if ax is None:
         figsize = kwargs.pop('figsize') if 'figsize' in kwargs else None
