@@ -1,8 +1,12 @@
 import pprint
 import re, os
+import pandas as pd
+from typing import Optional, AnyStr
+from pathlib import Path
 from ..mnts_logger import MNTSLogger
 
-__all__ = ['get_unique_IDs', 'get_fnames_by_globber', 'get_fnames_by_IDs', 'load_supervised_pair_by_IDs']
+__all__ = ['get_unique_IDs', 'get_fnames_by_globber', 'get_fnames_by_IDs', 'load_supervised_pair_by_IDs',
+           'check_ID_duplicates']
 
 
 def get_unique_IDs(fnames, globber=None, return_dict=False):
@@ -26,9 +30,10 @@ def get_unique_IDs(fnames, globber=None, return_dict=False):
     else:
         return iddict
 
-
-
-def get_fnames_by_IDs(fnames, idlist, globber=None, return_dict=False):
+def get_fnames_by_IDs(fnames,
+                      idlist,
+                      globber=None,
+                      return_dict=False):
     _logger = MNTSLogger['algorithm.utils']
     if globber is None:
         globber = "([0-9]{3,5})"
@@ -99,3 +104,38 @@ def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None, re
     else:
         source_list, target_list = zip(*pairs)
         return source_list, target_list
+
+def check_ID_duplicates(target_dir: Path,
+                        globber: AnyStr = None) -> pd.DataFrame:
+    r"""
+    Check if there are any files with duplicated IDs in the file and output a dataframe
+    Args:
+        target_dir (Path):
+            Files to check
+        globber (str):
+            Regex string to glob the ID.
+
+    Returns:
+        pd.DataFrame
+    """
+    _logger = MNTSLogger['algorithm.utils']
+    target_dir = Path(target_dir)
+
+    assert target_dir.is_dir(), "Cannot open target_dir."
+    if len(list(target_dir.iterdir())) == 0:
+        _logger.info(f"Nothing is in {str(target_dir.absolute())}")
+
+    dup_keys = []
+    ids = get_unique_IDs([str(f) for f in target_dir.iterdir()],
+                         return_dict=True, globber=globber)
+    for key in ids:
+        if len(ids[key]) > 1:
+            dup_keys.append(key)
+
+    out_frame = []
+    for key in dup_keys:
+        row = pd.Series(ids[key], index=[f"Filename {i}" for i in range(len(ids[key]))], name=key)
+        out_frame.append(row)
+    out_frame = pd.concat(out_frame, axis=1, sort=False)
+    out_frame.fillna('-', inplace=True)
+    return out_frame.T
