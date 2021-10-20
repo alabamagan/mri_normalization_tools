@@ -37,6 +37,7 @@ class MNTSLogger(object):
         self._verbose = verbose
         self._warning_hash = {}
         self._keepfile = keep_file
+        self._loggerkey = logger_name
 
         log_levels={
             'debug': logging.DEBUG,
@@ -129,7 +130,7 @@ class MNTSLogger(object):
 
     def __class_getitem__(cls, item):
         if cls.global_logger is None:
-            cls.global_logger = MNTSLogger('./default.log', logger_name='default', verbose=True)
+            cls.global_logger = MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
@@ -157,14 +158,21 @@ class MNTSLogger(object):
         if not MNTSLogger.global_logger is None:
             # Attempts to create a global logger
             MNTSLogger.global_logger = MNTSLogger('./default_logdir.log', logger_name='default_logname')
-            return Logger.global_logger
+            return MNTSLogger.global_logger
         else:
             raise AttributeError("Global logger was not created.")
 
-    # def __del__(self):
-    #     if not self._keepfile & (self != Logger.get_global_logger() or len(Logger.all_loggers) == 1):
-    #         self._logger.info("Removing log file...")
-    #         os.remove(self._log_dir)
+    def __del__(self):
+        if not self._keepfile and ((self == MNTSLogger.global_logger) or (len(MNTSLogger.all_loggers) == 1)):
+            self._logger.info("Deleting self...")
+            self._logger.info("Removing log file...")
+            MNTSLogger.all_loggers.pop(self._loggerkey)
+            del self._logger
+            os.remove(self._log_dir)
+        else:
+            self._logger.info("Deleting self...")
+            MNTSLogger.all_loggers.pop(self._loggerkey)
+            del self._logger
 
 class LogExceptions(object):
     def __init__(self, callable):
