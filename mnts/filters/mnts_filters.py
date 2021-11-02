@@ -415,12 +415,12 @@ class MNTSFilterGraph(object):
 
         try:
             if cls_obj.check_output(output_directory, output_prefix):
-                self._logger.info(f"All outputs exist for input {input}, skipping.")
+                self._logger.info(f"All outputs exist for input {args}, skipping.")
                 return 0
             else:
                 res = cls_obj.execute(*args)
         except Exception as e:
-            self._logger.error(f"Got unexpected error {e} for input: {pprint.pformat(args)}")
+            self._logger.exception(f"Got unexpected error {e} for input: {pprint.pformat(args)}")
             return 1
 
         for n in cls_obj._exits:
@@ -516,9 +516,17 @@ class MNTSFilterGraph(object):
                     u_node_dir.mkdir(exist_ok=True, parents=True)
 
                 # Get output from these upstream nodes and save them into corresponding temp folders
-                out = cls_obj.execute(*args, force_request=u_node)
-                out_name = u_node_dir.joinpath(f"{output_prefix}")
-                sitk.WriteImage(out[u_node], str(out_name.with_suffix('.nii.gz')))
+                try:
+                    out_name = u_node_dir.joinpath(f"{output_prefix}")
+                    # skip if it exist:
+                    if out_name.is_file():
+                        self._logger.info(f"File: {str(out_name)} already exist, skipping...")
+                        continue
+                    out = cls_obj.execute(*args, force_request=u_node)
+                    sitk.WriteImage(out[u_node], str(out_name.with_suffix('.nii.gz')))
+                except Exception as e:
+                    self._logger.exception(f"Error during the processing of input: {args}, for node {n}. Original error"
+                                           f" message is {e}")
 
     def train_node(self,
                    nodelist: List[Union[int, MNTSFilter]],
