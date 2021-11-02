@@ -5,7 +5,7 @@ from typing import Union, Tuple, List, Optional, Callable
 from ..mnts_filters import MNTSFilter
 from .intensity_base import MNTSIntensityBase
 
-__all__ = ['OtsuTresholding', 'ThresBinaryClosing', 'HuangThresholding']
+__all__ = ['OtsuThresholding', 'ThresBinaryClosing', 'HuangThresholding', 'LiThresholding', 'IsoDataThresholding']
 
 
 class ThresBinaryClosing(MNTSIntensityBase, MNTSFilter):
@@ -94,8 +94,8 @@ class ThresBinaryClosing(MNTSIntensityBase, MNTSFilter):
         """
         outmask = sitk.Cast(outmask, sitk.sitkUInt8)
         outmask = sitk.BinaryMorphologicalClosing(outmask, closing_kernel_size.tolist())  # TODO: check kernel size
-        outmask[:, :, 0] = sitk.BinaryFillhole(outmask[:, :, 0])
-        outmask[:, :, -1] = sitk.BinaryFillhole(outmask[:, :, -1])
+        for i in range(outmask.GetSize()[-1]):
+            outmask[...,i] = sitk.BinaryFillhole(outmask[..., i])
         outmask = sitk.BinaryFillhole(outmask, fullyConnected=True)
         return outmask
 
@@ -109,14 +109,14 @@ class ThresBinaryClosing(MNTSIntensityBase, MNTSFilter):
         return mask
 
 
-class OtsuTresholding(ThresBinaryClosing):
+class OtsuThresholding(ThresBinaryClosing):
     r"""
     See Also:
         :class:`sitk.OtsuThreshold`
 
     """
     def __init__(self, closing_kernel_size=[5, 5, 5]):
-        super(OtsuTresholding, self).__init__(closing_kernel_size=closing_kernel_size)
+        super(OtsuThresholding, self).__init__(closing_kernel_size=closing_kernel_size)
         self.core_func = self._core_func
 
     def _core_func(self, input):
@@ -135,3 +135,33 @@ class HuangThresholding(ThresBinaryClosing):
 
     def _core_func(self, input):
         return sitk.HuangThreshold(input, 0, 1, 200)
+
+
+class LiThresholding(ThresBinaryClosing):
+    r"""
+    See Also:
+        :class:`sitk.LiThreshold`
+
+    """
+    def __init__(self, closing_kernel_size=[5, 5, 5]):
+        super(LiThresholding, self).__init__(closing_kernel_size=closing_kernel_size)
+        self.core_func = self._core_func
+
+    def _core_func(self, input):
+        return sitk.LiThreshold(input, 0, 1, 200)
+
+
+class IsoDataThresholding(ThresBinaryClosing):
+    r"""
+    See Also:
+        :class:`sitk.IsoDataThreshold`
+
+    """
+    def __init__(self, closing_kernel_size=[5, 5, 5]):
+        super(IsoDataThresholding, self).__init__(closing_kernel_size=closing_kernel_size)
+        self.core_func = self._core_func
+
+    def _core_func(self, input):
+        return sitk.IsoDataThreshold(input, 0, 1, 200)
+
+
