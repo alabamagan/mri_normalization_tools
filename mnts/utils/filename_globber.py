@@ -136,6 +136,11 @@ def check_ID_duplicates(target_dir: Path,
     for key in dup_keys:
         row = pd.Series(ids[key], index=[f"Filename {i}" for i in range(len(ids[key]))], name=key)
         out_frame.append(row)
-    out_frame = pd.concat(out_frame, axis=1, sort=False)
-    out_frame.fillna('-', inplace=True)
-    return out_frame.T
+
+    if len(out_frame) == 0:
+        _logger.info(f"Searched {len(target_dir.iterdir())}, no ID duplication found.")
+        return None
+    else:
+        out_frame = pd.concat(out_frame, axis=1, sort=False)
+        out_frame.fillna('-', inplace=True)
+        return out_frame.T
