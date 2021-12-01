@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     # Add filter nodes to the graph.
     G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
-    G.add_node(OtsuTresholding(), 0)    # Use mask to better match teh histograms
+    G.add_node(OtsuThresholding(), 0)    # Use mask to better match teh histograms
     G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
     G.add_node(NyulNormalizer(), [2, 1])
     G.add_node(RangeRescale(0, 5000), 3, is_exit=True)
