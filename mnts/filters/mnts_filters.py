@@ -339,7 +339,8 @@ class MNTSFilterGraph(object):
 
         # gather_output
         if force_request is None:
-            for i in reversed(self._exits): # Later exit nodes has more chance to walk through all exit nodes.
+            # Later exit nodes has more chance to walk through all exit nodes. This is good for caching.
+            for i in reversed(self._exits):
                 if i in self._output:
                     continue
                 else:
@@ -354,7 +355,8 @@ class MNTSFilterGraph(object):
     def mpi_execute(self,
                     output_prefix: Iterable[str],
                     output_directory: Union[str, Path, List[Union[str, Path]], Dict],
-                    *args) -> None:
+                    *args,
+                    **kwargs) -> None:
         r"""
         For use with :func:`mnts.filters.mpi_wrapper`. This copy the MNTSFilterGraph object and call the `execute`
         method on different inputs. Note that this should be called AFTER the states of the filters are loaded.
@@ -393,37 +395,42 @@ class MNTSFilterGraph(object):
         # Create a copy of this class to separate
         cls_obj = copy.deepcopy(self)
 
-        # check inputs are properlyspecified.
-        if isinstance(output_directory, (str, Path)):
-            output_directory = [output_directory]
-        # If `output_directory` is list, tuple
-        if isinstance(output_directory, (list, tuple)):
-            if len(output_directory) != len(cls_obj._exits):
-                if len(output_directory) == 1:
-                    _od = Path(output_directory[0])
-                    output_directory = {v: _od.joinpath(self.nodes[v]['filter'].get_name()) for v in self._exits}
+        if 'force_request' in kwargs:
+            output_directory = {kwargs['force_request']: output_directory}
+            res = cls_obj.execute(*args, **kwargs)
+        else:
+            # check inputs are properlyspecified.
+            if isinstance(output_directory, (str, Path)):
+                output_directory = [output_directory]
+            # If `output_directory` is list, tuple
+            if isinstance(output_directory, (list, tuple)):
+                if len(output_directory) != len(cls_obj._exits):
+                    if len(output_directory) == 1:
+                        _od = Path(output_directory[0])
+                        output_directory = {v: _od.joinpath(self.nodes[v]['filter'].get_name()) for v in self._exits}
+                    else:
+                        raise IndexError("The lenth of output directories specified do not match the number of "
+                                         "exit nodes.")
                 else:
-                    raise IndexError("The lenth of output directories specified do not match the number of "
-                                     "exit nodes.")
-            else:
-                output_directory = {v: output_directory[n] for n, v in enumerate(self._exits)}
-        elif isinstance(output_directory, dict):
-            if list(output_directory.keys()) != list(self._exits):
-                msg = f"Keys of specified output does not match the exist nodes. " \
-                      f"Got: {output_directory.keys()} and {self._exits}"
-                raise IndexError(msg)
+                    output_directory = {v: output_directory[n] for n, v in enumerate(self._exits)}
+            elif isinstance(output_directory, dict):
+                if list(output_directory.keys()) != list(self._exits):
+                    msg = f"Keys of specified output does not match the exist nodes. " \
+                          f"Got: {output_directory.keys()} and {self._exits}"
+                    raise IndexError(msg)
 
-        try:
-            if cls_obj.check_output(output_directory, output_prefix):
-                self._logger.info(f"All outputs exist for input {args}, skipping.")
-                return 0
-            else:
-                res = cls_obj.execute(*args)
-        except Exception as e:
-            self._logger.exception(f"Got unexpected error {e} for input: {pprint.pformat(args)}")
-            return 1
+            try:
+                if cls_obj.check_output(output_directory, output_prefix):
+                    self._logger.info(f"All outputs exist for input {args}, skipping.")
+                    return 0
+                else:
+                    res = cls_obj.execute(*args, **kwargs)
+            except Exception as e:
+                self._logger.exception(f"Got unexpected error {e} for input: {pprint.pformat(args)}")
+                return 1
 
-        for n in cls_obj._exits:
+        exit_nodes = cls_obj._exits if not 'force_request' in kwargs else [kwargs['force_request']]
+        for n in exit_nodes:
             out_d = output_directory[n]
             self._logger.info(f"{out_d}")
             if not out_d.exists():
