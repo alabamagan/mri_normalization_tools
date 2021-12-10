@@ -38,6 +38,14 @@ generally consist of the following steps:
 - cachetools >=4.2.2
 - netgraph >= 0.7.0
 
+# Install
+
+Installation using pip
+
+```bash
+pip install git+https://github.com/alabamagan/mri_normalization_tools
+```
+
 # Examples
 
 > ![Graph](./img/05_graph.png)
