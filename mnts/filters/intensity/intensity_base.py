@@ -11,6 +11,11 @@ class MNTSIntensityBase(object):
     This class marks intensity transform and any filters that inherit this class (before inheriting
     MNTSFitler will skip label images. Label images are identified as images with pixel type UInt8
     or LabelUInt8 or LabelUInt16.
+
+    .. note::
+        Don't inherit this class if you want the filter to operate on the specified pixel types
+
+
     """
     def __init__(self):
         super(MNTSIntensityBase, self).__init__()
