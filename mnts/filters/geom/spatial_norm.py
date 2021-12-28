@@ -41,13 +41,14 @@ class SpatialNorm(MNTSFilter):
 
     @property
     def interpolation(self):
-        return self._interpolation_names[self._interpolation]
+        return list(self._interpolation_names.keys())[self._interpolation]
 
     @interpolation.setter
     def interpolation(self, val):
         if isinstance(val, str):
             self._interpolation = self._interpolation_names.get(val, 'linear')
         else:
+            assert val in self._interpolation_names.values(), f"{val} is not in available methods {self._interpolation_names}"
             self._interpolation = val
 
         if not self._interpolation in self._interpolation_names.values():

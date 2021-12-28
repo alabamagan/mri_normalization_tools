@@ -7,9 +7,18 @@ from typing import Any, Dict, Iterable, List, Union
 
 import SimpleITK as sitk
 import networkx as nx
+import yaml
 from cachetools import LRUCache, cachedmethod
 
 from ..mnts_logger import MNTSLogger
+
+from ..filters import geom, intensity, MNTSFilter
+from ..filters.geom import *
+from ..filters.intensity import *
+
+_avail_filters = []
+_avail_filters.extend(dir(geom))
+_avail_filters.extend(dir(intensity))
 
 __all__ = ['MNTSFilterGraph']
 
@@ -49,6 +58,58 @@ class MNTSFilterGraph(object):
     @property
     def edges(self):
         return self._graph.edges
+
+    @staticmethod
+    def CreateGraphFromYAML(yaml_file: Union[Path, str]):
+        r"""
+
+        Args:
+            yaml_file (Path or str):
+                Text file containing
+
+        .. codeblock::
+
+        """
+        _logger = MNTSLogger['MNTSFilterGraph']
+        yaml_file = Path(yaml_file)
+        if not yaml_file.exists():
+            raise IOError("Cannot open transform file.")
+
+        # Read file
+        with open(yaml_file, 'r') as stream:
+            data_loaded = yaml.safe_load(stream)
+
+        graph = MNTSFilterGraph()
+        steps = []
+        for key in data_loaded:
+            # Check if the specified filter exist
+            try:
+                _filter_class = eval(key)
+            except AttributeError:
+                _logger.exception(f"Cannot load filter: {key}")
+                _logger.error(f"{key} is not in the available list {_avail_filters}")
+
+            # Get and parse the attributes
+
+            _content = data_loaded.get(key, None)
+            if _content is None:
+                steps.append(_filter_class())
+            else:
+                # For list, there could be both args and kwargs.
+                if isinstance(_content, list):
+                    _ext_kwargs = _content.pop('_ext', {})
+                    _args = [i for i in _content if not isinstance(i, dict)]
+                    _kwargs = [i for i in _content if isinstance(i, dict)]
+                    _kwargs = {} if len(_kwargs) == 0 else _kwargs[0]
+                    graph.add_node(_filter_class(*_args, **_kwargs), **_ext_kwargs)
+
+                # If its just a dict, its kwargs
+                elif isinstance(_content, dict):
+                    _ext_kwargs = _content.pop('_ext', {})
+                    _filter = _filter_class(**_content)
+                    graph.add_node(_filter, **_ext_kwargs)
+        return graph
+
 
     def _node_search(self,
                      attr_key: str,
