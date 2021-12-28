@@ -48,6 +48,8 @@ pip install git+https://github.com/alabamagan/mri_normalization_tools
 
 # Examples
 
+## General Example
+
 > ![Graph](./img/05_graph.png)
 >
 > Caption: Green node is the input node, blue node is the output node.
@@ -99,7 +101,47 @@ if __name__ == '__main__':
         sitk.WriteImage(save_im[4], fname)  # RangeRescale output at node index 3
 ```
 
-#TODO
+## Creating graph from yaml file
+
+### Example YAML file
+
+![Img](./img/07_graph.png)
+
+```yaml
+SpatialNorm: # This layer should have the same name as the filter name
+    out_spacing: [0.5, 0.5, 0] # All kwargs arguments can be specified in this format
+
+HuangThresholding:
+    closing_kernel_size: 10
+    _ext: # The argument of the method MNTSFilterGraph.add_node(), must be specified with _ext key
+        upstream: 0 # Keyword upstream is also necessary, otherwise, the node will be see as an input node.
+        is_exit: True
+
+N4ITKBiasFieldCorrection:
+    _ext:
+        upstream: [0, 1]
+  
+NyulNormalizer:
+    _ext:
+        upstream: [2, 1]
+        is_exit: True
+```
+
+### Python script
+
+```python
+from pathlib import Path
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
+
+yaml_file = '_test_graph.yaml'
+
+if __name__ == '__main__':
+    G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph.yaml')
+    print(G)
+    Path('default.log').unlink() # Remove useless log file
+```
+
+# TODO
 
 - [X] Training required filters
 - [X] Intensity normalization ignores segmentation (UInt8 image won't be processed, might need `force` option?)
