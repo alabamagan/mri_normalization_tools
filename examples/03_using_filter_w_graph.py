@@ -1,6 +1,6 @@
 from mnts.filters.geom import *
 from mnts.filters.intensity import *
-from mnts.filters.mnts_filters import MNTSFilterGraph
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
 import networkx as nx
 import matplotlib.pyplot as plt
 import SimpleITK as sitk

@@ -15,19 +15,19 @@ class ThresBinaryClosing(MNTSIntensityBase, MNTSFilter):
 
     The results based on my personal experience on head-and-neck images are as follow:
 
-        | Method                      | T1w | T2w | T1w-ce-fs | T1w-ce | T2w-fs |
-        |:---------------------------:|:---:|:---:|:---------:|:------:|:------:|
-        | HuangThreshold              | ✔   |     | ✔         | ✔      | ✔    |
-        | OtsuThreshold               | ✔   |     | ✔         | ✔      | ✘    |
-        | IsoDataThreshold            | ✔   |     | ✔         | ✔      | ✘    |
-        | MaximumEntropyThreshold     | ✘   |     | ✘         | ✘      | ✘    |
-        | MomentsThreshold            | ✔   |     | ✔         | ✔      | ✘    |
-        | KittlerIllingworthThreshold | ✘   |     | ✘         | ✘      | ✘    |
-        | LiThreshold                 | ✔   |     | ✔         | ✔      | ✔    |
-        | ShanbhagThreshold           | ✘   |     | ✘         | ✘      | ✘    |
-        | RenyiEntropyThreshold       | ✘   |     | ✘         | ✔      | ✘    |
-        | TriangleThreshold           | ✘   |     | ✔         | ✔      | ✔    |
-        | YenThreshold                | ✘   |     | ✘         | ✔      | ✘    |
+        | Method                      | T1w  | T2w  | T1w-ce-fs | T1w-ce | T2w-fs |
+        |:---------------------------:|:----:|:----:|:---------:|:------:|:------:|
+        | HuangThreshold              | ✔    |      | ✔        | ✔      | ✔      |
+        | OtsuThreshold               | ✔    |      | ✔        | ✔      | ✘      |
+        | IsoDataThreshold            | ✔    |      | ✔        | ✔      | ✘      |
+        | MaximumEntropyThreshold     | ✘    |      | ✘        | ✘      | ✘      |
+        | MomentsThreshold            | ✔    |      | ✔        | ✔      | ✘      |
+        | KittlerIllingworthThreshold | ✘    |      | ✘        | ✘      | ✘      |
+        | LiThreshold                 | ✔    |      | ✔        | ✔      | ✔      |
+        | ShanbhagThreshold           | ✘    |      | ✘        | ✘      | ✘      |
+        | RenyiEntropyThreshold       | ✘    |      | ✘        | ✔      | ✘      |
+        | TriangleThreshold           | ✘    |      | ✔        | ✔      | ✔      |
+        | YenThreshold                | ✘    |      | ✘        | ✔      | ✘      |
 
     Attributes:
         closing_kernel_size (list of floats):
