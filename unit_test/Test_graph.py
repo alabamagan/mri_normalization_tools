@@ -37,7 +37,11 @@ def create_graph() -> MNTSFilterGraph:
     G.add_node(NyulNormalizer(), [2, 1], is_exit=True)
     return G
 
-class TestGraphFromYAML(unittest.TestCase):
+class TestGraph(unittest.TestCase):
+    def test_graph_print(self):
+        G = create_graph()
+        self.assertIsInstance(str(G), str)
+
     def test_graph_from_yaml(self):
         # Create file from str
         with open('_test_graph.yaml', 'w') as f:

@@ -49,7 +49,7 @@ if __name__ == '__main__':
     Training
     """
     # Train and save the states.
-    G.train_node(2, temp_output_folder, temp_output_folder.joinpath("EG_04_States"))
+    G.train_node(temp_output_folder.joinpath("EG_04_States"), temp_output_folder, 2)
 
     """
     Inference

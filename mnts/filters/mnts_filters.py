@@ -6,7 +6,7 @@ import SimpleITK as sitk
 
 from ..mnts_logger import MNTSLogger
 
-__all__ = ['MNTSFilter', 'MNTSFilterPipeline']
+__all__ = ['MNTSFilter', 'MNTSFilterPipeline', 'MNTSFilterRequireTraining']
 
 class MNTSFilter(object):
     def __init__(self):

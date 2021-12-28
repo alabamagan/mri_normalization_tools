@@ -1,4 +1,5 @@
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 from mnts.filters.mnts_filters_graph import MNTSFilterGraph
 
@@ -30,6 +31,7 @@ if __name__ == '__main__':
         f.write(test_yaml)
 
     G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph.yaml')
-    print(G)
+    G.plot_graph()
+    plt.show()
     Path('default.log').unlink()
     Path('_test_graph.yaml').unlink()

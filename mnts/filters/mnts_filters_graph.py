@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Union
 
 import SimpleITK as sitk
 import networkx as nx
+import numpy as np
 import yaml
 from cachetools import LRUCache, cachedmethod
 
@@ -489,9 +490,9 @@ class MNTSFilterGraph(object):
                                            f" message is {e}")
 
     def train_node(self,
-                   nodelist: List[Union[int, MNTSFilter]],
+                   save_dir: Union[str, Path],
                    training_inputs: Union[str, Path],
-                   save_dir: Union[str, Path]) -> None:
+                   nodelist: List[Union[int, MNTSFilter]] = None) -> None:
         r"""
         This method trains the selected node(s). Must call `prepare_training_files` before if this node is not an
         entrance node. If it is an entrance node, train the node separately it self. Contrary, you can also make use of
@@ -506,8 +507,15 @@ class MNTSFilterGraph(object):
         """
         input_path = Path(training_inputs).resolve()
         assert input_path.is_dir(), f"Cannot open training inputs at {input_path.__str__()}"
+
+        # if nodelist is not provided, train all nodes that require training
+        if nodelist is None:
+            # starts from the last node that needs training
+            nodelist = list(np.argwhere([isinstance(f, MNTSFilterRequireTraining) for f in self]).flatten()[::-1])
+
         if not isinstance(nodelist, (list, tuple)):
             nodelist = [nodelist]
+
         self._logger.info(f"Start training nodes.")
 
         # Collect list of training inputs first.
@@ -537,7 +545,7 @@ class MNTSFilterGraph(object):
                 if not u_node_dir.is_dir():
                     msg = f"Cannot open directory for training node {u_node_name} at: " \
                           f"{u_node_dir.resolve().__str__()}\n" \
-                          f"Have you ran repare_training_files()?"
+                          f"Have you ran prepare_training_files()?"
                     raise IOError(msg)
 
                 # append the gloobed files.
@@ -596,3 +604,10 @@ class MNTSFilterGraph(object):
         for n in self.nodes:
             msg += str(self.nodes[n]['filter']) + '\n\n'
         return msg
+
+    def __iter__(self):
+        r"""
+        As an iterator, this class return the filters based on the sequence they are added.
+        """
+        for i in self.nodes:
+            yield self.nodes[i]['filter']
