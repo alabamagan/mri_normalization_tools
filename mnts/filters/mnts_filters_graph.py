@@ -13,7 +13,7 @@ from cachetools import LRUCache, cachedmethod
 
 from ..mnts_logger import MNTSLogger
 
-from ..filters import geom, intensity, MNTSFilter
+from ..filters import geom, intensity, MNTSFilter, MNTSFilterRequireTraining
 from ..filters.geom import *
 from ..filters.intensity import *
 
@@ -353,7 +353,7 @@ class MNTSFilterGraph(object):
             output_directory = {kwargs['force_request']: output_directory}
             res = cls_obj.execute(*args, **kwargs)
         else:
-            # check inputs are properlyspecified.
+            # check inputs are properly specified.
             if isinstance(output_directory, (str, Path)):
                 output_directory = [output_directory]
             # If `output_directory` is list, tuple
@@ -392,7 +392,7 @@ class MNTSFilterGraph(object):
 
             # how to name the output?
             out_im = res[n]
-            out_im_name = out_d.joinpath(output_prefix).resolve().__str__()
+            out_im_name = out_d.joinpath(output_prefix).with_suffix('.nii.gz').resolve().__str__()
             cls_obj._logger.info(f"Writing to output {out_im_name}")
             sitk.WriteImage(out_im, str(out_im_name))
         return 0
@@ -437,11 +437,12 @@ class MNTSFilterGraph(object):
                         └── ...
 
         Args:
-            nodelist (list of int or MNTSFilter):
+            nodelist (list of int or MNTSFilter, Optional):
                 The (list of) nodes that require training. The output from their upstream(s) are collected and
-                computed and them put into the corresponding locations stated above.
+                computed and them put into the corresponding locations stated above. If None locate and train all nodes
+                that are child of MNTSFilterRequireTraining
             output_prefix (str):
-                Name for the output. They are saved as `{output_prefix}`.nii.gz.
+                Name for the output. They are saved as `{output_prefix}`_[1,2,3...].nii.gz. Default to "output".
             output_directory (str or Path):
                 Specify where to store the output from the upstream nodes.
             *args:
@@ -452,12 +453,18 @@ class MNTSFilterGraph(object):
             None
         """
         temp_dir = Path(output_directory).absolute()
+        # if nodelist is not provided, train all nodes that require training
+        if nodelist is None:
+            # starts from the last node that needs training
+            nodelist = list(np.argwhere([isinstance(f, MNTSFilterRequireTraining) for f in self]).flatten()[::-1])
+
         if not isinstance(nodelist, (list, tuple)):
             nodelist = [nodelist]
 
         #!! Might get some memory issue here, but should be managible.
         # Create a copy of this class to separate
         cls_obj = copy.deepcopy(self)
+
 
         for n in nodelist:
             # Create directories first
@@ -490,9 +497,9 @@ class MNTSFilterGraph(object):
                                            f" message is {e}")
 
     def train_node(self,
-                   save_dir: Union[str, Path],
+                   nodelist: List[Union[int, MNTSFilter]],
                    training_inputs: Union[str, Path],
-                   nodelist: List[Union[int, MNTSFilter]] = None) -> None:
+                   save_dir: Union[str, Path]) -> None:
         r"""
         This method trains the selected node(s). Must call `prepare_training_files` before if this node is not an
         entrance node. If it is an entrance node, train the node separately it self. Contrary, you can also make use of
@@ -500,6 +507,13 @@ class MNTSFilterGraph(object):
 
         The trained states will be saved by passing the path:
             Path(save_dir).joinpath([node_index]_[node_name])
+
+        Args:
+            nodelist (list):
+                The list of nodes to train. If `None` is specified, all nodes that are `MNTSFilterRequireTraining`
+                instances will be trained.
+            training_inputs (Path or str):
+            save_dir (Path or str):
 
         See Also:
             :class:`MNTSFilterRequireTraining`
@@ -532,7 +546,7 @@ class MNTSFilterGraph(object):
             if not trained_node_files_dir.is_dir():
                 msg = f"Cannot open directory for training node {trained_node_name} at: " \
                       f"{trained_node_files_dir.resolve().__str__()} \n" \
-                      f"Have you ran repare_training_files()?"
+                      f"Have you ran prepare_training_files()?"
                 raise IOError(msg)
 
             # Get upsteam nodes from which the training images are prepared by
@@ -563,6 +577,9 @@ class MNTSFilterGraph(object):
         save_dir = Path(save_dir)
         if not save_dir.exists() :
             raise IOError(f"Cannot open directory/file to load the states, got {save_dir}")
+        if nodelist is None:
+            # starts from the last node that needs training
+            nodelist = list(np.argwhere([isinstance(f, MNTSFilterRequireTraining) for f in self]).flatten()[::-1])
         if not isinstance(nodelist, (list, tuple)):
             nodelist = [nodelist]
 
