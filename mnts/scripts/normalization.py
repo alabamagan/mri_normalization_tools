@@ -7,7 +7,7 @@ from mnts.utils import repeat_zip
 
 import argparse
 
-__all__ = ['_train_normalization', '_inference_normalization', 'run_graph_train']
+__all__ = ['_train_normalization', '_inference_normalization', 'run_graph_train', 'run_graph_inference']
 
 def _train_normalization(G: MNTSFilterGraph,
                          input_dir: Union[Path, str],
