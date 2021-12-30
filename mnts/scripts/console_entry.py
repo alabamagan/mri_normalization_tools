@@ -20,8 +20,7 @@ class MNTS_ConsoleEntry(argparse.ArgumentParser):
             args, kwargs = default_arguments[k]
             self.add_argument(*args, **kwargs)
 
-        # For convinient, but not very logical to put this here
-        self._logger = MNTSLogger['mnts_mainthread']
+
 
     @staticmethod
     def make_console_entry_io():
@@ -31,11 +30,11 @@ class MNTS_ConsoleEntry(argparse.ArgumentParser):
     def parse_args(self, *args, **kwargs):
         a = super(MNTS_ConsoleEntry, self).parse_args(*args, **kwargs)
 
+        if not MNTSLogger.global_logger is None:
+            MNTSLogger.global_logger._verbose = a.verbose
+
         # Create output dir
         if hasattr(a, 'output'):
             if not os.path.isdir(a.output):
                 os.makedirs(a.output, exist_ok=True)
-
-        if hasattr(a, 'verbose'):
-            self._logger._verbose = a.verbose
         return a

@@ -149,6 +149,7 @@ if __name__ == '__main__':
 - [X] Graph label the filter names
 - [X] Overflow protection for some function
 - [X] MRI bias field correction
+- [ ] Support processing labels together with images (for spatial operations only)
 - [ ] Finish pipeline implementation
 - [ ] MPI examples
 - [ ] Better documents for usage of dicom2nii

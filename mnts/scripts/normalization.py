@@ -1,5 +1,6 @@
 from .console_entry import MNTS_ConsoleEntry
 from ..filters import MNTSFilterGraph, mpi_wrapper
+from ..mnts_logger import MNTSLogger
 
 from pathlib import Path
 from typing import Union, Sequence
@@ -137,8 +138,15 @@ def run_graph_inference(raw_args=None):
                         help="Specify a yaml file for creating the normalization graph.")
     a = parser.parse_args(raw_args)
 
+    MNTSLogger['run_graph_inference'].info(f"Recieved arguments: {a}")
+
     yaml_file = Path(a.file)
     assert yaml_file.is_file(), f"Cannot open yaml file at {yaml_file}"
 
     G = MNTSFilterGraph.CreateGraphFromYAML(yaml_file)
+    _inference_normalization(G,
+                             a.state_dir,
+                             a.input,
+                             [a.output],
+                             a.numworker)
 
