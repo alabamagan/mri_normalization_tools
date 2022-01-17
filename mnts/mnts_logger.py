@@ -2,6 +2,8 @@ import logging
 import traceback
 import os, sys, traceback
 import hashlib
+import tempfile
+from pathlib import Path
 from tqdm import *
 
 __all__ = ['MNTSLogger', 'LogExceptions']
@@ -36,7 +38,7 @@ class MNTSLogger(object):
         self._log_dir = log_dir
         self._verbose = verbose
         self._warning_hash = {}
-        self._keepfile = keep_file
+        self._keep_file = keep_file
         self._loggerkey = logger_name
 
         log_levels={
@@ -54,13 +56,13 @@ class MNTSLogger(object):
             os.makedirs(os.path.dirname(log_dir), exist_ok=True)
         except:
             pass
-        self._log_dir = os.path.abspath(log_dir)
 
+        self.__enter__()
 
         self._logger = logging.getLogger(logger_name)
         formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
 
-        handler = logging.FileHandler(log_dir)
+        handler = logging.FileHandler(self._log_dir)
         handler.setFormatter(formatter)
 
         self._stream_handler = TqdmLoggingHandler(verbose=verbose)
@@ -69,16 +71,33 @@ class MNTSLogger(object):
         self._logger.addHandler(self._stream_handler)
         self._logger.setLevel(level=log_levels[log_level])
 
-        self.info("Loging to file at: {}".format(os.path.abspath(log_dir)))
+        self.info("Loging to file at: {}".format(os.path.abspath(self._log_dir)))
 
         # First logger created is the global logger.
         if MNTSLogger.global_logger is None:
             MNTSLogger.global_logger = self
-            MNTSLogger.all_loggers[logger_name] = self
             print = self.info
             sys.excepthook= self.exception_hook
             self.info("Exception hooked to this logger.")
 
+        # put this in all_logger
+        MNTSLogger.all_loggers[logger_name] = self
+
+    def __enter__(self):
+        # if not keep file, log to tempfile under the parent directory of log_dir
+        if not self._keep_file and MNTSLogger.global_logger is None:
+            temp_file = tempfile.NamedTemporaryFile('w', dir=str(Path(self._log_dir).parent), suffix='.log')
+            self._log_dir = temp_file.name
+            self._log_file = temp_file
+        elif MNTSLogger.global_logger is not None:
+            self._log_file = MNTSLogger.global_logger._log_file
+            self._log_dir = MNTSLogger.global_logger._log_dir
+        else:
+            self._log_file = open(self._log_dir, 'w')
+            self._log_dir = self._log_file.name
+        # Make sure its absolute
+        self._log_dir = os.path.abspath(self._log_dir)
+        return self
 
     def set_verbose(self, b):
         self._stream_handler.verbose=b
@@ -162,17 +181,41 @@ class MNTSLogger(object):
         else:
             raise AttributeError("Global logger was not created.")
 
-    def __del__(self):
-        if not self._keepfile and ((self == MNTSLogger.global_logger) or (len(MNTSLogger.all_loggers) == 1)):
+    @classmethod
+    def cleanup(cls):
+        g_l = cls.global_logger
+        for l in list(cls.all_loggers.keys()):
+            g_l.info(f"Deleting logger: {l}")
+            if cls.all_loggers[l] == g_l:
+                continue
+            else:
+                cls.all_loggers[l]._del()
+        g_l._del()
+
+        # Clean list
+        del cls.global_logger, cls.all_loggers
+        cls.global_logger = None
+        cls.all_loggers = {}
+
+    def _del(self):
+        if (self == MNTSLogger.global_logger) or (len(MNTSLogger.all_loggers) == 1):
             self._logger.info("Deleting self...")
             self._logger.info("Removing log file...")
             MNTSLogger.all_loggers.pop(self._loggerkey)
-            del self._logger
-            os.remove(self._log_dir)
+            self._log_file.close()
+            del self._logger, self._log_file
         else:
             self._logger.info("Deleting self...")
             MNTSLogger.all_loggers.pop(self._loggerkey)
             del self._logger
+
+    def __del__(self):
+        if self == MNTSLogger.global_logger:
+            MNTSLogger.cleanup()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self == MNTSLogger.global_logger:
+            self._log_file.close()
 
 class LogExceptions(object):
     def __init__(self, callable):
