@@ -96,7 +96,7 @@ def _inference_normalization(G: MNTSFilterGraph,
     G.load_node_states(None, str(state_path))
 
     # Prepare arguments
-    z = [["output"], [out_path], images]
+    z = [out_names, [out_path], images]
     if num_worker > 1:
         mpi_wrapper(G.mpi_execute, z, num_worker=num_worker)
     else:

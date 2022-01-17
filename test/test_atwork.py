@@ -45,7 +45,7 @@ def train_nyul():
     G = create_graph()
     result = mpi_wrapper(G.prepare_training_files, z)
 
-    G.train_node(out_temp_folder.joinpath('Trained_states'), out_temp_folder, 3)
+    G.train_node(3, out_temp_folder, out_temp_folder.joinpath('Trained_states'))
 
 def normalize_images(folder):
     import matplotlib.pyplot as plt

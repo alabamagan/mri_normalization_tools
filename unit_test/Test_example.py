@@ -1,10 +1,11 @@
 import unittest
 import os
+import subprocess
 
 class TestScript(unittest.TestCase):
     def test_example_1(self):
         os.chdir("../examples")
-        exec(open("01_using_the_filters.py").read())
+        subprocess.Popen("01_using_the_filters.py", cwd="../examples")
 
     def test_example_2(self):
         os.chdir("../examples")
