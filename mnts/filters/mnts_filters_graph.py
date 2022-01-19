@@ -79,6 +79,7 @@ class MNTSFilterGraph(object):
         # Read file
         with open(yaml_file, 'r') as stream:
             data_loaded = yaml.safe_load(stream)
+        _logger.info(f"Creating transform from content:\n {data_loaded}")
 
         graph = MNTSFilterGraph()
         steps = []
@@ -386,7 +387,6 @@ class MNTSFilterGraph(object):
         exit_nodes = cls_obj._exits if not 'force_request' in kwargs else [kwargs['force_request']]
         for n in exit_nodes:
             out_d = output_directory[n]
-            self._logger.info(f"{out_d}")
             if not out_d.exists():
                 out_d.mkdir(parents=True, exist_ok=True)
 
