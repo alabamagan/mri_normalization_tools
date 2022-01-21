@@ -27,7 +27,8 @@ class MNTSIntensityBase(object):
 
     def filter(self, *args):
         args = [self.try_read_image(a) for a in args]
-        self._logger.debug(f"{args[0].GetPixelID()}")
+        self._logger.debug(f"PixelID of input: {args[0].GetPixelID()}")
+        self._logger.debug(f"Pixel type: {args[0].GetPixelIDTypeAsString()}")
         if (args[0].GetPixelID() in [sitk.sitkUInt8,
                                     sitk.sitkLabelUInt8,
                                     sitk.sitkLabelUInt16]) \
