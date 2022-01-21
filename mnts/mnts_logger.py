@@ -57,7 +57,9 @@ class MNTSLogger(object):
         except:
             pass
 
-        self.__enter__()
+        if MNTSLogger.global_logger is None:
+            # prevent running this twice
+            self.__enter__()
 
         self._logger = logging.getLogger(logger_name)
         formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
@@ -69,7 +71,8 @@ class MNTSLogger(object):
         self._stream_handler.setFormatter(formatter)
         self._logger.addHandler(handler)
         self._logger.addHandler(self._stream_handler)
-        self._logger.setLevel(level=log_levels[log_level])
+        self._logger.setLevel(level=log_levels[log_level] if MNTSLogger.global_logger is None else
+                                                            MNTSLogger.global_logger._logger.level)
 
         self.info("Loging to file at: {}".format(os.path.abspath(self._log_dir)))
 
