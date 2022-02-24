@@ -284,7 +284,8 @@ class MNTSFilterGraph(object):
         Returns:
 
         """
-        assert len(args) == len(self._entrance), "Inputs do not align with number of entrance."
+        assert len(args) == len(self._entrance), \
+            f"Inputs ({len(args)}) do not align with number of entrance ({len(self._entrance)})."
 
         self._inputs = {n: args[i] for i, n in enumerate(self._entrance)}
 
