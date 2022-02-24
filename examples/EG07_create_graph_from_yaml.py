@@ -2,7 +2,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from mnts.filters.mnts_filters_graph import MNTSFilterGraph
-
+from mnts.mnts_logger import MNTSLogger
 # This is the format for the yaml file
 test_yaml =\
 """
@@ -27,14 +27,14 @@ NyulNormalizer:
 """
 
 def main():
-    with open('_test_graph.yaml', 'w') as f:
-        f.write(test_yaml)
+    with MNTSLogger('./default.log', keep_file=False, verbose=True) as _:
+        with open('_test_graph.yaml', 'w') as f:
+            f.write(test_yaml)
 
-    G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph.yaml')
-    G.plot_graph()
-    plt.show()
-    Path('default.log').unlink()
-    Path('_test_graph.yaml').unlink()
+        G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph.yaml')
+        G.plot_graph()
+        plt.show()
+        Path('_test_graph.yaml').unlink()
 
     return 0
 

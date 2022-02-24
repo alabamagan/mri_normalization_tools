@@ -15,9 +15,9 @@ setup(
     description='',
     install_requires=[r.strip() for r in open('requirements.txt').readlines()],
     entry_points = {
-        'scripts': [
-            'mnts-train = mnts.scripts.normalization::run_graph_train',
-            'mnts-infer = mnts.scripts.normalization::run_graph_inference'
-        ]
+        # 'scripts': [
+        #     'mnts-train = mnts.scripts.normalization::run_graph_train',
+        #     'mnts-infer = mnts.scripts.normalization::run_graph_inference'
+        # ]
     }
 )

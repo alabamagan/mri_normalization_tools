@@ -3,4 +3,4 @@ networkx >= 2.5
 decorator >= 5.0.7
 cachetools >=4.2.2
 netgraph >= 4.0.5
-yaml >= 5.3.1
+pyyaml >= 5.3.1
