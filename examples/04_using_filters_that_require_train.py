@@ -12,7 +12,7 @@ from mnts.filters.intensity import NyulNormalizer
 
 import pprint
 # If this protector is absent, windows python might go into recursive import loop.
-if __name__ == '__main__':
+def main():
     # Create the normalization graph.
     G = MNTSFilterGraph()
 
@@ -63,4 +63,7 @@ if __name__ == '__main__':
         print(f"Saving to {fname}")
         sitk.WriteImage(save_im[3], fname)
 
+    return 0
 
+if __name__ == '__main__':
+    main()

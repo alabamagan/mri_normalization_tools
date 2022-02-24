@@ -77,10 +77,13 @@ def normalize_images(folder):
     """
     Multi-thread
     """
-    # mpi_wrapper(partial(G.mpi_execute, force_request=0), seg_z, num_worker=10)
-
+    mpi_wrapper(partial(G.mpi_execute, force_request=0), seg_z, num_worker=10)
+    return 0
 
 # If this protector is absent, windows python might go into recursive import loop.
-if __name__ == '__main__':
-    #train_nyul()
+def main():
+    train_nyul()
     normalize_images(image_folder)
+
+if __name__ == '__main__':
+    main()

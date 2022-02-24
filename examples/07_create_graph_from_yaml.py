@@ -26,7 +26,7 @@ NyulNormalizer:
 
 """
 
-if __name__ == '__main__':
+def main():
     with open('_test_graph.yaml', 'w') as f:
         f.write(test_yaml)
 
@@ -35,3 +35,8 @@ if __name__ == '__main__':
     plt.show()
     Path('default.log').unlink()
     Path('_test_graph.yaml').unlink()
+
+    return 0
+
+if __name__ == '__main__':
+    main()
