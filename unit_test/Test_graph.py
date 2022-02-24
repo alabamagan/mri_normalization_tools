@@ -50,7 +50,6 @@ class TestGraph(unittest.TestCase):
         self.assertTrue(isinstance(G,
                                    MNTSFilterGraph))
         print(G)
-        Path('default.log').unlink()
         Path('_test_graph.yaml').unlink()
 
 if __name__ == '__main__':

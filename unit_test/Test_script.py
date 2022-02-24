@@ -64,6 +64,18 @@ class TestScript(unittest.TestCase):
         super(TestScript, self).__init__(*args, **kwargs)
         TestScript.create_samples()
 
+    def test_logger(self):
+        from mnts.mnts_logger import MNTSLogger
+
+        with MNTSLogger('./default.log', keep_file=True, verbose=True, log_level='debug') as logger:
+            logger.info("Info")
+            logger.debug("debug")
+
+            logger2 = MNTSLogger['logger2']
+            logger2.info("Info")
+            logger2.debug("debug")
+
+
     def test_norm_train(self):
         # Create graph
         G = create_graph()
@@ -102,7 +114,6 @@ class TestScript(unittest.TestCase):
     def clean_dir():
         # Delete temp images and generated files
         [Path(f).unlink() for f in fnames]
-        Path("./default.log").unlink()
         shutil.rmtree(str(out_path))
 
     def __del__(self):
