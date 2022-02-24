@@ -68,11 +68,12 @@ class SpatialNorm(MNTSFilter):
         original_spacing = np.asarray(input.GetSpacing())
 
         # Keep spacing if there's a negative value in out_spacing
-        new_spacing = np.asarray(self.out_spacing)
+        new_spacing = np.asarray(self.out_spacing, dtype='float')
         new_spacing[new_spacing <= 0] = original_spacing[new_spacing <=0]
-
         new_size = np.round((original_size * original_spacing) / new_spacing).astype('int').tolist()
-        self._logger.info(f"From {original_size} -> {new_size}")
+        self._logger.info(f"\n"
+                          f"\tSiz \t{original_size} \t-> {new_size}\n"
+                          f"\tSpc \t{original_spacing} \t-> {new_spacing}")
 
         # For segmentation, force to use nearest neighbor to avoid funny results.
         if input.GetPixelID() == sitk.sitkUInt8:
