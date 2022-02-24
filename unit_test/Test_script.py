@@ -9,6 +9,7 @@ from mnts.scripts.normalization import *
 from mnts.filters import MNTSFilterGraph
 from mnts.filters.intensity import *
 from mnts.filters.geom import *
+from mnts.mnts_logger import MNTSLogger
 from pathlib import Path
 
 def create_graph() -> MNTSFilterGraph:
@@ -60,14 +61,13 @@ NyulNormalizer:
 """
 
 class TestScript(unittest.TestCase):
+    CLEAN_FLAG = True
     def __init__(self, *args, **kwargs):
         super(TestScript, self).__init__(*args, **kwargs)
         TestScript.create_samples()
 
     def test_logger(self):
-        from mnts.mnts_logger import MNTSLogger
-
-        with MNTSLogger('./default.log', keep_file=True, verbose=True, log_level='debug') as logger:
+        with MNTSLogger('./default.log', keep_file=False, verbose=True, log_level='debug') as logger:
             logger.info("Info")
             logger.debug("debug")
 
@@ -76,27 +76,37 @@ class TestScript(unittest.TestCase):
             logger2.debug("debug")
 
 
-    def test_norm_train(self):
+    def test_norm_0_train(self):
         # Create graph
         G = create_graph()
         G._logger.set_verbose(1)
         _train_normalization(G, '.', str(out_path), 0)
 
-    def test_norm_train_mpi(self):
+        # Halt clean dir
+        TestScript.CLEAN_FLAG = False
+
+    def test_norm_2_train_mpi(self):
         # Create graph
         G = create_graph()
         G._logger.set_verbose(1)
         _train_normalization(G, '.', str(out_path), 16)
 
-    def test_norm_inference(self):
+        # Halt clean dir
+        TestScript.CLEAN_FLAG = False
+
+    def test_norm_1_inference(self):
         G = create_graph()
         G._logger.set_verbose(1)
         _inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 0)
 
-    def test_norm_inference_mpi(self):
+        TestScript.CLEAN_FLAG = True
+
+    def test_norm_3_inference_mpi(self):
         G = create_graph()
         G._logger.set_verbose(1)
         _inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 16)
+
+        TestScript.CLEAN_FLAG = True
 
     def test_console_entry_train(self):
         r"""Run this after """
@@ -113,11 +123,14 @@ class TestScript(unittest.TestCase):
     @staticmethod
     def clean_dir():
         # Delete temp images and generated files
-        [Path(f).unlink() for f in fnames]
-        shutil.rmtree(str(out_path))
+        if TestScript.CLEAN_FLAG:
+            [Path(f).unlink() for f in fnames]
+            shutil.rmtree(str(out_path))
+            MNTSLogger.cleanup()
 
     def __del__(self):
         TestScript.clean_dir()
+        pass
 
 if __name__ == '__main__':
     unittest.main()
