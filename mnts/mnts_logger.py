@@ -57,9 +57,7 @@ class MNTSLogger(object):
         except:
             pass
 
-        if MNTSLogger.global_logger is None:
-            # prevent running this twice
-            self.__enter__()
+        self.__enter__()
 
         self._logger = logging.getLogger(logger_name)
         formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
