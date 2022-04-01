@@ -93,7 +93,7 @@ def _inference_normalization(G: MNTSFilterGraph,
         images = [f for f in in_path.iterdir() if f.name.find('nii') != -1]
         out_names = [f.name for f in images]
     else:
-        assert in_path.suffix.find('nii') >= 0, "Can only handle nii files currently."
+        assert in_path.suffix in (".nii", ".gz"), f"Can only handle nii files currently, got: {in_path.suffix}"
         images = [str(in_path)]
         out_names = [in_path.name]
 
