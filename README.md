@@ -154,9 +154,20 @@ if __name__ == '__main__':
 - [x] MPI examples
 - [ ] Better documents for usage of dicom2nii
 
-# Example Data Credit
+# Example Data
 
-The example data was obtained through the openneuro initiative, accessed [here](https://openneuro.org/datasets/ds000105/versions/00001) [1-3]. The data was not matched with any diagnosis or pathology here. A subset of T1-weighted images were extracted from the original public domain data.
+The example data was obtained through the openneuro initiative, accessed [here](https://openneuro.org/datasets/ds000105/versions/00001) [1-3]. The data was not matched with any diagnosis or pathology here. A subset of T1-weighted images were extracted from the original public domain data, which were renamed into the followings:
+
+```
+.
+└── examples/
+    └── example_data/
+        ├── MRI_01.nii.gz
+        ├── MRI_02.nii.gz
+        └── MRI_03.nii.gz
+```
+
+
 
 
 ## Reference
