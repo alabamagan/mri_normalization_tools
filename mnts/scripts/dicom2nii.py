@@ -3,16 +3,17 @@ from ..utils import preprocessing
 from ..io import batch_dicom2nii
 import argparse
 import os
+from pathlib import Path
 
 __all__ = ['dicom2nii']
 
 def dicom2nii(a, logger):
-    if not os.path.isdir(a.input):
+    if not Path(a.input).is_dir():
         raise FileNotFoundError(f"Cannot open {a.input}.")
-    if not os.path.isdir(a.output):
+    if not Path(a.output).is_dir():
         logger.warning(f"Target directory does not exist, trying to create: {a.output}")
-        os.makedirs(a.output, exist_ok=True)
-        if not os.path.isdir(a.output):
+        Path(a.output).mkdir(exist_ok=True)
+        if not Path(a.output).is_dir():
             logger.error("Error making output directory.")
             return
 
@@ -38,9 +39,9 @@ def dicom2nii(a, logger):
 
 def console_entry(raw_args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input', type=str, action='store', dest='input',
+    parser.add_argument('-i', '--input', type=str, action='store', dest='input', required=True,
                         help='Input directory that contains the DICOMs.')
-    parser.add_argument('-o', '--output', type=str, action='store', dest='output', default= None,
+    parser.add_argument('-o', '--output', type=str, action='store', dest='output', required=True,
                         help='Output directory to hold the nii files.')
     parser.add_argument('-d', '--depth', type=int, action='store', default=3, dest='depth',
                         help='Depth of DICOM file search.')
