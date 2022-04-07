@@ -17,7 +17,8 @@ setup(
     entry_points = {
         'console_scripts': [
             'mnts-train=mnts.scripts.normalization:run_graph_train',
-            'mnts-infer=mnts.scripts.normalization:run_graph_inference'
+            'mnts-infer=mnts.scripts.normalization:run_graph_inference',
+            'mnts-dicom2nii=mnts.scripts.dicom2nii:console_entry'
         ]
     }
 )
