@@ -42,7 +42,7 @@ def get_fnames_by_IDs(fnames,
     id_fn_pair = get_unique_IDs(fnames, globber, return_dict=True)
     ids_in_fn = id_fn_pair.keys()
 
-    id_not_in_fnames = set(ids_in_fn) - set(idlist)
+    id_not_in_fnames = set(idlist) - set(ids_in_fn)
     if len(id_not_in_fnames) > 0:
         _logger.warning(f"Cannot find anything for the following ids:\n"
                         f"{pprint.pformat(id_not_in_fnames)}")
