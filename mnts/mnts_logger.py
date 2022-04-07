@@ -19,7 +19,7 @@ class MNTSLogger(object):
     ERROR = logging.ERROR
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
 
-    def __init__(self, log_dir, logger_name=__name__, verbose=False, log_level=log_level, keep_file=True):
+    def __init__(self, log_dir='default.log', logger_name=__name__, verbose=False, log_level=log_level, keep_file=True):
         """
         This is the logger. This is typically passed to all modules for logging. Use class method Logger['str'] to get a
         logger named 'str'.
@@ -35,7 +35,7 @@ class MNTSLogger(object):
         """
 
         super(MNTSLogger, self).__init__()
-        self._log_dir = log_dir
+        self._log_dir = str(Path(log_dir).absolute())
         self._verbose = verbose
         self._warning_hash = {}
         self._keep_file = keep_file
@@ -53,26 +53,30 @@ class MNTSLogger(object):
 
         # Check and create directory for log
         try:
-            os.makedirs(os.path.dirname(log_dir), exist_ok=True)
+            if not Path(log_dir).parent.is_dir():
+                Path(log_dir).parent.mkdir()
         except:
             pass
 
+        # if not keep_log use a temp file to hold the messages
         self.__enter__()
 
-        self._logger = logging.getLogger(logger_name)
         formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
+        self._logger = logging.getLogger(logger_name)
 
-        handler = logging.FileHandler(self._log_dir)
+        handler = logging.StreamHandler(self._log_file)
         handler.setFormatter(formatter)
 
-        self._stream_handler = TqdmLoggingHandler(verbose=verbose)
-        self._stream_handler.setFormatter(formatter)
-        self._logger.addHandler(handler)
-        self._logger.addHandler(self._stream_handler)
-        self._logger.setLevel(level=log_levels[log_level] if MNTSLogger.global_logger is None else
-                                                            MNTSLogger.global_logger._logger.level)
-
-        self.info("Loging to file at: {}".format(os.path.abspath(self._log_dir)))
+        if not logger_name in MNTSLogger.all_loggers:
+            self._stream_handler = TqdmLoggingHandler(verbose=verbose)
+            self._stream_handler.setFormatter(formatter)
+            self._logger.addHandler(handler)
+            self._logger.addHandler(self._stream_handler)
+            self._logger.setLevel(level=log_levels[log_level] if MNTSLogger.global_logger is None else
+                                                                MNTSLogger.global_logger._logger.level)
+            # put this in all_logger
+            MNTSLogger.all_loggers[logger_name] = self
+            self.info(f"Loging to {self._log_dir}")
 
         # First logger created is the global logger.
         if MNTSLogger.global_logger is None:
@@ -81,8 +85,6 @@ class MNTSLogger(object):
             sys.excepthook= self.exception_hook
             self.info("Exception hooked to this logger.")
 
-        # put this in all_logger
-        MNTSLogger.all_loggers[logger_name] = self
 
     def __enter__(self):
         # if not keep file, log to tempfile under the parent directory of log_dir
@@ -97,7 +99,7 @@ class MNTSLogger(object):
             self._log_file = open(self._log_dir, 'w')
             self._log_dir = self._log_file.name
         # Make sure its absolute
-        self._log_dir = os.path.abspath(self._log_dir)
+        self._log_dir = str(Path(self._log_dir).absolute())
         return self
 
     def set_verbose(self, b):
