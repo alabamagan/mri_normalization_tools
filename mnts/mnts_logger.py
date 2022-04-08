@@ -19,7 +19,7 @@ class MNTSLogger(object):
     ERROR = logging.ERROR
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
 
-    def __init__(self, log_dir='default.log', logger_name=__name__, verbose=False, log_level=log_level, keep_file=True):
+    def __init__(self, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
         """
         This is the logger. This is typically passed to all modules for logging. Use class method Logger['str'] to get a
         logger named 'str'.
