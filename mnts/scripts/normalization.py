@@ -128,7 +128,7 @@ def run_graph_train(raw_args=None):
 
     """
 
-    parser = MNTS_ConsoleEntry('ionv')
+    parser = MNTS_ConsoleEntry('ionvl')
     parser.add_argument('-f', '--file', action='store', type=str,
                         help="Specify a yaml file for creating the normalization graph.")
     a = parser.parse_args(raw_args)
@@ -138,13 +138,16 @@ def run_graph_train(raw_args=None):
 
     G = MNTSFilterGraph.CreateGraphFromYAML(yaml_file)
 
-    _train_normalization(G,
-                         a.input,
-                         a.output,
-                         a.numworker)
+    log_save = Path(a.save_log).suffix == ".log"
+    log_dir = a.save_log if log_save else None
+    with MNTSLogger(log_dir, keep_file=log_save, verbose=a.verbose) as logger:
+        _train_normalization(G,
+                             a.input,
+                             a.output,
+                             a.numworker)
 
 def run_graph_inference(raw_args=None):
-    parser = MNTS_ConsoleEntry('ionv')
+    parser = MNTS_ConsoleEntry('ionvl')
     parser.add_argument('-s', '--state-dir', action='store', type=str,
                         help="Directory which holds the saved states.")
     parser.add_argument('-f', '--file', action='store', type=str,
@@ -158,11 +161,14 @@ def run_graph_inference(raw_args=None):
     yaml_file = Path(a.file)
     assert yaml_file.is_file(), f"Cannot open yaml file at {yaml_file}"
 
-    G = MNTSFilterGraph.CreateGraphFromYAML(yaml_file)
-    _inference_normalization(G,
-                             a.state_dir,
-                             a.input,
-                             [a.output],
-                             a.numworker,
-                             a.force_segment)
+    log_save = Path(a.save_log).suffix == ".log"
+    log_dir = a.save_log if log_save else None
+    with MNTSLogger(log_dir, keep_file=False, verbose=a.verbose) as logger:
+        G = MNTSFilterGraph.CreateGraphFromYAML(yaml_file)
+        _inference_normalization(G,
+                                 a.state_dir,
+                                 a.input,
+                                 [a.output],
+                                 a.numworker,
+                                 a.force_segment)
 
