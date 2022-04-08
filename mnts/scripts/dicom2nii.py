@@ -23,18 +23,18 @@ def dicom2nii(a, logger):
     dicom_dirs = preprocessing.recursive_list_dir(a.depth, a.input)
     logger.info(f"Dirs:\n{dicom_dirs}")
 
-    data_formatting.batch_dicom2nii(dicom_dirs,
-                                    out_dir = a.output,
-                                    workers = a.num_workers,
-                                    seq_filters = None,
-                                    idglobber = a.idglobber,
-                                    use_patient_id = a.usepid,
-                                    use_top_level_fname = a.usefname,
-                                    input = a.input,
-                                    idlist = ids,
-                                    prefix = a.prefix,
-                                    debug = a.debug,
-                                    dump_meta_data = a.dump_dicom_tags)
+    batch_dicom2nii(dicom_dirs,
+                    out_dir = a.output,
+                    workers = a.num_workers,
+                    seq_filters = None,
+                    idglobber = a.idglobber,
+                    use_patient_id = a.usepid,
+                    use_top_level_fname = a.usefname,
+                    input = a.input,
+                    idlist = ids,
+                    prefix = a.prefix,
+                    debug = a.debug,
+                    dump_meta_data = a.dump_dicom_tags)
 
 
 def console_entry(raw_args=None):
