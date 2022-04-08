@@ -14,6 +14,7 @@ class MNTS_ConsoleEntry(argparse.ArgumentParser):
             'L': (['-l', '--idlist'],   {'type': str, 'help': 'List or txt file directory for loading only specific ids.', 'default': None}),
             'n': (['-n', '--numworker'],{'type': int, 'help': 'Specify number of workers.', 'default': 10}),
             'v': (['-v', '--verbose'],  {'action': 'store_true', 'help': 'Verbosity.'}),
+            'l': (['-l', '--save-log'], {'action': 'store', 'help': 'Save log file to designated path', 'default': "./default.log"})
         }
 
         for k in addargs:
