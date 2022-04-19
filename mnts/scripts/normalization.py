@@ -79,7 +79,7 @@ def _inference_normalization(G: MNTSFilterGraph,
             If specified, convert all images in the input dir into uint8 type, i.e. labels, before proceeding.
 
     Returns:
-        None
+        0
     """
     state_path, in_path = [Path(p) for p in [state_dir, input_dir]]
     if isinstance(output_dir, (list, tuple)):
@@ -116,6 +116,7 @@ def _inference_normalization(G: MNTSFilterGraph,
             for row in repeat_zip(*z):
                 print(row)
             [G.mpi_execute(*row) for row in repeat_zip(*z)]
+    return 0
 
 
 def run_graph_train(raw_args=None):
