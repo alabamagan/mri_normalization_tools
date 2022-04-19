@@ -80,7 +80,7 @@ class TestScript(unittest.TestCase):
         # Create graph
         G = create_graph()
         G._logger.set_verbose(1)
-        _train_normalization(G, '.', str(out_path), 0)
+        self.assertEqual(_train_normalization(G, '.', str(out_path), 0), 0)
 
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
@@ -89,7 +89,7 @@ class TestScript(unittest.TestCase):
         # Create graph
         G = create_graph()
         G._logger.set_verbose(1)
-        _train_normalization(G, '.', str(out_path), 16)
+        self.assertEqual(_train_normalization(G, '.', str(out_path), 16), 0)
 
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
@@ -97,14 +97,14 @@ class TestScript(unittest.TestCase):
     def test_norm_1_inference(self):
         G = create_graph()
         G._logger.set_verbose(1)
-        _inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 0)
+        self.assertEqual(_inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 0), 0)
 
         TestScript.CLEAN_FLAG = True
 
     def test_norm_3_inference_mpi(self):
         G = create_graph()
         G._logger.set_verbose(1)
-        _inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 16)
+        self.assertEqual(_inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 16), 0)
 
         TestScript.CLEAN_FLAG = True
 
