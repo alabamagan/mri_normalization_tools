@@ -126,7 +126,7 @@ def run_graph_train(raw_args=None):
         raw_args:
 
     Returns:
-
+        0 if success
     """
 
     parser = MNTS_ConsoleEntry('ionvl')
@@ -146,6 +146,7 @@ def run_graph_train(raw_args=None):
                              a.input,
                              a.output,
                              a.numworker)
+    return 0
 
 def run_graph_inference(raw_args=None):
     parser = MNTS_ConsoleEntry('ionvl')

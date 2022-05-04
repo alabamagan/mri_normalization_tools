@@ -31,9 +31,6 @@ class MNTS_ConsoleEntry(argparse.ArgumentParser):
     def parse_args(self, *args, **kwargs):
         a = super(MNTS_ConsoleEntry, self).parse_args(*args, **kwargs)
 
-        if not MNTSLogger.global_logger is None:
-            MNTSLogger.global_logger._verbose = a.verbose
-
         # Create output dir
         if hasattr(a, 'output'):
             if not os.path.isdir(a.output):

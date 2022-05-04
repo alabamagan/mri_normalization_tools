@@ -65,10 +65,9 @@ def console_entry(raw_args=None):
                         help='Keep log file under ./dicom2nii.log')
     a = parser.parse_args(raw_args)
 
-    logger = MNTSLogger('./dicom2nii.log', logger_name='dicom2nii', verbose=True, keep_file=a.log)
-    logger.info("Recieve argumetns: {}".format(a))
-
-    dicom2nii(a, logger)
+    with MNTSLogger('./dicom2nii.log', logger_name='dicom2nii', verbose=True, keep_file=a.log) as logger:
+        logger.info("Recieve argumetns: {}".format(a))
+        dicom2nii(a, logger)
 
 if __name__ == '__main__':
     console_entry()
