@@ -240,11 +240,11 @@ class MNTSLogger(object):
             self.info("Deleting this logger...")
 
         # Remove all handler from loggers
-        for h in self._logger.handlers:
-            try:
-                self._logger.removeHandler(h)
-            finally:
-                pass
+        try:
+            self._logger.removeHandler(self._file_handler)
+            self._logger.removeHandler(self._stream_handler)
+        finally:
+            pass
 
 class LogExceptions(object):
     def __init__(self, callable):
