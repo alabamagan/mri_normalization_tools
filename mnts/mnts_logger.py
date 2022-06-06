@@ -153,8 +153,10 @@ class MNTSLogger(object):
     def critical(self, msg):
         self.log_print_tqdm(msg, level=logging.CRITICAL)
 
-    def exception(self, msg=""):
+    def exception(self, msg="", exec=False):
         self._logger.exception(msg)
+        # exec = traceback.format_exc()
+        # self._logger.debug(sys.exc_info()[2])
 
 
     def exception_hook(self, *args):
@@ -198,6 +200,8 @@ class MNTSLogger(object):
     @classmethod
     def cleanup(cls):
         g_l = cls.global_logger
+        if g_l is None:
+            return
         for l in list(cls.all_loggers.keys()):
             if cls.all_loggers[l] == g_l:
                 continue
