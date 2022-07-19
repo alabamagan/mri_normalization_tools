@@ -247,7 +247,7 @@ class MNTSLogger(object):
         try:
             self._logger.removeHandler(self._file_handler)
             self._logger.removeHandler(self._stream_handler)
-        finally:
+        except:
             pass
 
 class LogExceptions(object):
