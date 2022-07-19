@@ -235,13 +235,17 @@ class MNTSLogger(object):
         if self == MNTSLogger.global_logger:
             self.info("Deleting global logger...")
             MNTSLogger.global_logger = None
+            # Pop first to prevent infinite loop
             MNTSLogger.all_loggers.pop(self._logger_name)
             for loggers in MNTSLogger.all_loggers:
+                # exist all existing logs
                 MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
             MNTSLogger.all_loggers.clear()
             self._log_file.close() # close to delete tempfile
         else:
-            self.info("Deleting this logger...")
+            # If self is just an ordinary logger
+            MNTSLogger.all_loggers.pop(self._logger_name)
+            self.debug("Deleting this logger...")
 
         # Remove all handler from loggers
         try:
