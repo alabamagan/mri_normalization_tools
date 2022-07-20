@@ -237,7 +237,7 @@ class MNTSLogger(object):
             MNTSLogger.global_logger = None
             # Pop first to prevent infinite loop
             MNTSLogger.all_loggers.pop(self._logger_name)
-            for loggers in MNTSLogger.all_loggers:
+            for loggers in dict.copy(MNTSLogger.all_loggers):
                 # exist all existing logs
                 MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
             MNTSLogger.all_loggers.clear()
