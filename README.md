@@ -143,16 +143,16 @@ if __name__ == '__main__':
 
 # TODO
 
-- [X] Training required filters
-- [X] Intensity normalization ignores segmentation (UInt8 image won't be processed, might need `force` option?)
-- [ ] Image registration
-- [X] Graph label the filter names
-- [X] Overflow protection for some function
-- [X] MRI bias field correction
-- [ ] Support processing labels together with images (for spatial operations only)
-- [ ] Finish pipeline implementation
-- [x] MPI examples
-- [ ] Better documents for usage of dicom2nii
+- [X]  Training required filters
+- [X]  Intensity normalization ignores segmentation (UInt8 image won't be processed, might need `force` option?)
+- [ ]  Image registration
+- [X]  Graph label the filter names
+- [X]  Overflow protection for some function
+- [X]  MRI bias field correction
+- [ ]  Support processing labels together with images (for spatial operations only)
+- [ ]  Finish pipeline implementation
+- [X]  MPI examples
+- [ ]  Better documents for usage of dicom2nii
 
 # Example Data
 
@@ -167,9 +167,6 @@ The example data was obtained through the openneuro initiative, accessed [here](
         └── MRI_03.nii.gz
 ```
 
-
-
-
 ## Reference
 
 [1] Haxby, J.V., Gobbini, M.I., Furey, M.L., Ishai, A., Schouten, J.L.,Pietrini, P. (2001). Distributed and overlapping representations of faces and objects in ventral temporal cortex. Science, 293(5539):2425-30
@@ -179,6 +176,5 @@ The example data was obtained through the openneuro initiative, accessed [here](
 [3] Abdi, H., Haxby, J.V. (2005). Partially distributed representations of objects and faces in ventral temporal cortex. J Cogn Neurosci, 17(4):580-90
 
 ## License of usage
-
 
 This dataset is made available under the Public Domain Dedication and License v1.0, whose full text can be found at [http://www.opendatacommons.org/licenses/pddl/1.0/](http://www.opendatacommons.org/licenses/pddl/1.0/). We hope that all users will follow the ODC Attribution/Share-Alike Community Norms ([http://www.opendatacommons.org/norms/odc-by-sa/](http://www.opendatacommons.org/norms/odc-by-sa/)); in particular, while not legally required, we hope that all users of the data will acknowledge the OpenfMRI project and NSF Grant OCI-1131441 (R. Poldrack, PI) in any publications.
