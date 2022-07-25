@@ -4,8 +4,11 @@ import numpy as np
 import re
 import multiprocessing as mpi
 import random
+import json
 sitk.ProcessObject_GlobalWarningDisplayOff()
 
+from functools import partial
+from pathlib import Path
 from ..mnts_logger import MNTSLogger
 from mnts.utils.preprocessing import recursive_list_dir
 
@@ -29,7 +32,7 @@ def dicom2nii(folder: str,
     """
 
     workerid = mpi.current_process().name
-    logger = Logger['utils.dicom2nii-%s'%workerid]
+    logger = MNTSLogger['utils.dicom2nii-%s'%workerid]
     logger.info(f"Handling: {folder}")
 
 
@@ -177,7 +180,7 @@ def batch_dicom2nii(folderlist, out_dir,
         func:`dicom2nii`
     """
     import multiprocessing as mpi
-    logger = Logger['mpi_dicom2nii']
+    logger = MNTSLogger['mpi_dicom2nii']
 
     if workers > 1:
         pool = mpi.Pool(workers)
@@ -187,7 +190,8 @@ def batch_dicom2nii(folderlist, out_dir,
                            out_dir = out_dir,
                            **kwargs
                            )
-            # dicom2nii(f, out_dir, seq_fileters, idglobber, use_patient_id,use_top_level_fname, input, idlist)
+            # dicom2nii(f, out_dir, seq_filters, idglobber, use_patient_id,use_top_level_fname, input, idlist)
+            # func(f)
             pool.apply_async(func, args=[f])
         pool.close()
         pool.join()
