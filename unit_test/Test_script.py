@@ -67,7 +67,7 @@ class TestScript(unittest.TestCase):
         TestScript.create_samples()
 
     def test_logger(self):
-        with MNTSLogger('./default.log', keep_file=False, verbose=True, log_level='debug') as logger:
+        with MNTSLogger('./default.log', keep_file=True, verbose=True, log_level='debug') as logger:
             logger.info("Info")
             logger.debug("debug")
 
@@ -75,21 +75,41 @@ class TestScript(unittest.TestCase):
             logger2.info("Info")
             logger2.debug("debug")
 
+        # Do it twitce to test its
+        with MNTSLogger('./default.log', keep_file=True, verbose=True, log_level='debug') as logger:
+            logger.info("Info")
+            logger.debug("debug")
+
+            logger2 = MNTSLogger['logger3']
+            logger2.info("Info")
+            logger2.debug("debug")
+        Path('./default.log').unlink()
+
+        # Test auto delete function
+        temp_name = None
+        with MNTSLogger('.', keep_file=False, verbose=True, log_level='debug') as logger:
+            logger.info("This should be deleted soon")
+            temp_name = logger._log_dir
+        self.assertFalse(Path(temp_name).is_file())
+
+        TestScript.CLEAN_FLAG = False
 
     def test_norm_0_train(self):
         # Create graph
-        G = create_graph()
-        G._logger.set_verbose(1)
-        self.assertEqual(_train_normalization(G, '.', str(out_path), 0), 0)
+        with MNTSLogger('./', verbose=True, log_level='debug', keep_file=False) as logger:
+            G = create_graph()
+            G._logger.set_verbose(1)
+            self.assertEqual(_train_normalization(G, '.', str(out_path), 0), 0)
 
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
 
     def test_norm_2_train_mpi(self):
         # Create graph
-        G = create_graph()
-        G._logger.set_verbose(1)
-        self.assertEqual(_train_normalization(G, '.', str(out_path), 16), 0)
+        with MNTSLogger('./', verbose=True, log_level='debug', keep_file=False) as logger:
+            G = create_graph()
+            G._logger.set_verbose(1)
+            self.assertEqual(_train_normalization(G, '.', str(out_path), 16), 0)
 
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
@@ -106,13 +126,13 @@ class TestScript(unittest.TestCase):
         G._logger.set_verbose(1)
         self.assertEqual(_inference_normalization(G, str(out_path.joinpath("Trained_states")), ".", str(out_path), 16), 0)
 
-        TestScript.CLEAN_FLAG = True
+        TestScript.CLEAN_FLAG = False
 
     def test_console_entry_train(self):
         r"""Run this after """
         with open('_temp.yaml', 'w') as f:
             f.write(test_yaml)
-        run_graph_train(f"-i . -f ./_temp.yaml -n 16 -v -o {str(out_path)}".split())
+        self.assertEqual(run_graph_train(f"-i . -f ./_temp.yaml -n 16 -v -o {str(out_path)}".split()), 0)
         Path('_temp.yaml').unlink()
 
     @staticmethod
@@ -126,9 +146,9 @@ class TestScript(unittest.TestCase):
         if TestScript.CLEAN_FLAG:
             [Path(f).unlink() for f in fnames]
             shutil.rmtree(str(out_path))
-            MNTSLogger.cleanup()
+        pass
 
-    def __del__(self):
+    def teardown(self):
         TestScript.clean_dir()
         pass
 
