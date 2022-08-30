@@ -92,7 +92,7 @@ class MNTSLogger(object):
         if MNTSLogger.global_logger is None:
             MNTSLogger.global_logger = self
             MNTSLogger.is_verbose = self._verbose
-            print = self.info
+            self.sys_hook = sys.excepthook
             sys.excepthook= self.exception_hook
             self.info(f"{logger_name} created as global locker. Exception hooked to this logger.")
 
@@ -158,10 +158,11 @@ class MNTSLogger(object):
         # exec = traceback.format_exc()
         # self._logger.debug(sys.exc_info()[2])
 
-
     def exception_hook(self, *args):
         self.error('Uncaught exception:')
         self._logger.exception(args[-1], exc_info=args)
+        self.sys_hook(*args)
+        self.__del__()
 
     def __class_getitem__(cls, item):
         if cls.global_logger is None:
