@@ -227,6 +227,12 @@ class MNTSLogger(object):
             MNTSLogger.all_loggers.pop(self._logger_name)
             del self._logger
 
+    def __str__(self):
+        msg = f"This logger: \n\t{self._logger_name}\n" \
+              f"All loggers: \n" + "\n".join(["\t- "+l for l in self.all_loggers]) + \
+              f"Logfile: \nt\t{self._log_dir}"
+        return msg
+
     def __del__(self):
         if self == MNTSLogger.global_logger:
             MNTSLogger.cleanup()
