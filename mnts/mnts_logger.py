@@ -3,22 +3,42 @@ import traceback
 import os, sys, traceback
 import hashlib
 import tempfile
+import atexit
 from pathlib import Path
 from tqdm import *
 
 __all__ = ['MNTSLogger', 'LogExceptions']
 
 class MNTSLogger(object):
-    global_logger = None
-    all_loggers = {}
-    DEBUG = logging.DEBUG
-    INFO = logging.INFO
-    WARNING = logging.WARNING
-    CRITICAL = logging.CRITICAL
-    FATAL = logging.FATAL
-    ERROR = logging.ERROR
-    is_verbose = False
+    global_logger = 'Init'
+    all_loggers   = {}
+    DEBUG         = logging.DEBUG
+    INFO          = logging.INFO
+    WARNING       = logging.WARNING
+    CRITICAL      = logging.CRITICAL
+    FATAL         = logging.FATAL
+    ERROR         = logging.ERROR
+    is_verbose    = False
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
+
+    def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
+        if cls.global_logger is 'Init':
+            logger_name = 'global'
+            cls.global_logger = None
+            cls.global_logger = MNTSLogger(log_dir = log_dir,
+                                           logger_name = logger_name,
+                                           verbose = verbose,
+                                           log_level =log_level,
+                                           keep_file = keep_file)
+            cls.is_verbose = cls.global_logger._verbose
+            cls.global_logger.sys_hook = sys.excepthook
+            sys.excepthook = cls.global_logger.exception_hook
+            cls.global_logger.info(f"Created first logger. Exception hooked to this logger.")
+            return super().__new__(cls)
+        elif logger_name in cls.all_loggers and logger_name != 'global':
+            return cls.all_loggers[logger_name]
+        else:
+            return super().__new__(cls)
 
     def __init__(self, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
         """
@@ -36,6 +56,12 @@ class MNTSLogger(object):
         """
 
         super(MNTSLogger, self).__init__()
+        # Do nothing if logger already created because it would have been initialized previuosly
+        if logger_name in MNTSLogger.all_loggers:
+            self.warning(f"Trying to duplicate logger {logger_name}")
+            return
+
+        # Define attributes
         self._log_dir = str(Path(log_dir).absolute())
         self._verbose = verbose
         self._warning_hash = {}
@@ -52,13 +78,6 @@ class MNTSLogger(object):
         assert log_level in log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
             list(log_levels.keys()), log_level
         )
-
-        # Align configuration with global logger
-        if MNTSLogger.global_logger is not None:
-            self._verbose = MNTSLogger.global_logger._verbose
-            self._keep_file = MNTSLogger.global_logger._keep_file
-            self._log_dir = MNTSLogger.global_logger._log_dir
-            self._log_level = MNTSLogger.global_logger._log_level
 
         # Check and create directory for log
         try:
@@ -87,15 +106,9 @@ class MNTSLogger(object):
             # put this in all_logger
             MNTSLogger.all_loggers[logger_name] = self
             self.info(f"Loging to {self._log_dir}")
-
-        # First logger created is the global logger.
-        if MNTSLogger.global_logger is None:
-            MNTSLogger.global_logger = self
-            MNTSLogger.is_verbose = self._verbose
-            self.sys_hook = sys.excepthook
-            sys.excepthook= self.exception_hook
-            self.info(f"{logger_name} created as global locker. Exception hooked to this logger.")
-
+        else:
+            msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
+            raise ArithmeticError(msg)
 
     def __enter__(self):
         # if not keep file, log to tempfile under the parent directory of log_dir
@@ -240,18 +253,30 @@ class MNTSLogger(object):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self == MNTSLogger.global_logger:
-            self.info("Deleting global logger...")
-            MNTSLogger.global_logger = None
-            # Pop first to prevent infinite loop
-            MNTSLogger.all_loggers.pop(self._logger_name)
-            for loggers in dict.copy(MNTSLogger.all_loggers):
-                # exist all existing logs
-                MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
-            MNTSLogger.all_loggers.clear()
-            self._log_file.close() # close to delete tempfile
+            # give the global chair to next logger if there are other loggers in the lsit
+            if not len(MNTSLogger.all_loggers) == 1:
+                lk = list(MNTSLogger.all_loggers.keys())
+                lk.remove(self._logger_name)
+                next_global = lk[0]
+                self.info(f"Promoting {next_global} as global logger.")
+                MNTSLogger.global_logger == self.all_loggers[next_global]
+                sys.excepthook = MNTSLogger.global_logger.exception_hook
+                MNTSLogger.all_loggers.pop(self._logger_name)
+                self.debug("Deleting this logger...")
+            else:
+                self.info("Deleting global logger...")
+                MNTSLogger.global_logger = None
+                # Pop first to prevent infinite loop
+                MNTSLogger.all_loggers.pop(self._logger_name)
+                for loggers in dict.copy(MNTSLogger.all_loggers):
+                    # exist all existing logs
+                    MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
+                MNTSLogger.all_loggers.clear()
+                self._log_file.close() # close to delete tempfile
         else:
             # If self is just an ordinary logger
-            MNTSLogger.all_loggers.pop(self._logger_name)
+            if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
+                MNTSLogger.all_loggers.pop(self._logger_name)
             self.debug("Deleting this logger...")
 
         # Remove all handler from loggers
@@ -309,3 +334,6 @@ class LevelFormatter(logging.Formatter):
             return self._level_formatters[record.levelno].format(record)
 
         return super(LevelFormatter, self).format(record)
+
+
+atexit.register(MNTSLogger.cleanup)
