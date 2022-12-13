@@ -214,7 +214,7 @@ class MNTSLogger(object):
     @classmethod
     def cleanup(cls):
         g_l = cls.global_logger
-        if g_l is None:
+        if g_l is None or isinstance(g_l, str):
             return
         for l in list(cls.all_loggers.keys()):
             if cls.all_loggers[l] == g_l:
@@ -253,26 +253,15 @@ class MNTSLogger(object):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self == MNTSLogger.global_logger:
-            # give the global chair to next logger if there are other loggers in the lsit
-            if not len(MNTSLogger.all_loggers) == 1:
-                lk = list(MNTSLogger.all_loggers.keys())
-                lk.remove(self._logger_name)
-                next_global = lk[0]
-                self.info(f"Promoting {next_global} as global logger.")
-                MNTSLogger.global_logger == self.all_loggers[next_global]
-                sys.excepthook = MNTSLogger.global_logger.exception_hook
-                MNTSLogger.all_loggers.pop(self._logger_name)
-                self.debug("Deleting this logger...")
-            else:
-                self.info("Deleting global logger...")
-                MNTSLogger.global_logger = None
-                # Pop first to prevent infinite loop
-                MNTSLogger.all_loggers.pop(self._logger_name)
-                for loggers in dict.copy(MNTSLogger.all_loggers):
-                    # exist all existing logs
-                    MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
-                MNTSLogger.all_loggers.clear()
-                self._log_file.close() # close to delete tempfile
+            self.info("Deleting global logger...")
+            MNTSLogger.global_logger = None
+            # Pop first to prevent infinite loop
+            MNTSLogger.all_loggers.pop(self._logger_name)
+            for loggers in dict.copy(MNTSLogger.all_loggers):
+                # exist all existing logs
+                MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
+            MNTSLogger.all_loggers.clear()
+            self._log_file.close() # close to delete tempfile
         else:
             # If self is just an ordinary logger
             if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
