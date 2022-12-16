@@ -178,8 +178,10 @@ class MNTSLogger(object):
         self.__del__()
 
     def __class_getitem__(cls, item):
-        if cls.global_logger is None:
-            cls.global_logger = MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
+        # If global logger haven't be created, casually use temp file to host the log
+        if cls.global_logger is 'Init' or None:
+            cls.global_logger = MNTSLogger('./default.log', logger_name='default',
+                                           verbose=True, keep_file=False)
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
