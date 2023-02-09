@@ -7,11 +7,19 @@ import atexit
 from pathlib import Path
 from tqdm import *
 
+import torch.distributed as dist
+
 __all__ = ['MNTSLogger', 'LogExceptions']
 
 class MNTSLogger(object):
     global_logger = 'Init'
     all_loggers   = {}
+    log_levels={
+        'debug': logging.DEBUG,
+        'info': logging.INFO,
+        'warning': logging.WARNING,
+        'error': logging.ERROR
+    }
     DEBUG         = logging.DEBUG
     INFO          = logging.INFO
     WARNING       = logging.WARNING
@@ -33,7 +41,8 @@ class MNTSLogger(object):
             cls.is_verbose = cls.global_logger._verbose
             cls.global_logger.sys_hook = sys.excepthook
             sys.excepthook = cls.global_logger.exception_hook
-            cls.global_logger.info(f"Created first logger. Exception hooked to this logger.")
+            cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
+                                   f"Log level is: {log_level}")
             return super().__new__(cls)
         elif logger_name in cls.all_loggers and logger_name != 'global':
             return cls.all_loggers[logger_name]
@@ -56,6 +65,11 @@ class MNTSLogger(object):
         """
 
         super(MNTSLogger, self).__init__()
+        # before anything, check if the logger is created within a subprocess initiated by torch
+        if dist.is_initialized():
+            logger_name = logger_name + f"-DDP-{dist.get_rank():02d}"
+        self._logger_name = logger_name
+
         # Do nothing if logger already created because it would have been initialized previuosly
         if logger_name in MNTSLogger.all_loggers:
             self.warning(f"Trying to duplicate logger {logger_name}")
@@ -69,14 +83,9 @@ class MNTSLogger(object):
         self._logger_name = logger_name
         self._log_level = log_level
 
-        log_levels={
-            'debug': logging.DEBUG,
-            'info': logging.INFO,
-            'warning': logging.WARNING,
-            'error': logging.ERROR
-        }
-        assert log_level in log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
-            list(log_levels.keys()), log_level
+
+        assert log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
+            list(self.log_levels.keys()), log_level
         )
 
         # Check and create directory for log
@@ -90,22 +99,22 @@ class MNTSLogger(object):
         self.__enter__()
 
         formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
-        self._logger = logging.getLogger(logger_name)
 
         handler = logging.StreamHandler(self._log_file)
         handler.setFormatter(formatter)
         self._file_handler = handler
 
+        # create a new logger if requested logger was not already created
         if not logger_name in MNTSLogger.all_loggers:
             self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
             self._stream_handler.setFormatter(formatter)
             self._logger.addHandler(self._file_handler)
             self._logger.addHandler(self._stream_handler)
-            self._logger.setLevel(level=log_levels[self._log_level] if MNTSLogger.global_logger is None else
+            self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
                                                                 MNTSLogger.global_logger._logger.level)
             # put this in all_logger
             MNTSLogger.all_loggers[logger_name] = self
-            self.info(f"Loging to {self._log_dir}")
+            self.info(f"Loging to {self._log_dir} with log level: {self._logger.level}")
         else:
             msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
             raise ArithmeticError(msg)
@@ -125,6 +134,16 @@ class MNTSLogger(object):
         # Make sure its absolute
         self._log_dir = str(Path(self._log_dir).absolute())
         return self
+
+    @property
+    def _logger(self):
+        return logging.getLogger(self._logger_name)
+
+    @classmethod
+    def set_log_level(cls, level):
+        assert level in cls.log_levels, "Log levels available are: {}".format(','.join(cls.log_levels.keys()))
+        for l in cls.all_loggers:
+            cls.all_loggers[l]._logger.level = cls.log_levels[level]
 
     def set_verbose(self, b):
         self._stream_handler.verbose=b
@@ -203,7 +222,6 @@ class MNTSLogger(object):
     def Log_Print_tqdm(msg, level=logging.INFO):
         MNTSLogger.global_logger.log_print_tqdm(msg, level)
 
-
     @staticmethod
     def get_global_logger():
         if not MNTSLogger.global_logger is None:
@@ -215,6 +233,10 @@ class MNTSLogger(object):
 
     @classmethod
     def cleanup(cls):
+        # in DDP subprocess, the global logger is controlled by rank 0 process only
+        if dist.is_initialized():
+            if dist.get_rank() != 0:
+                return
         g_l = cls.global_logger
         if g_l is None or isinstance(g_l, str):
             return
@@ -231,16 +253,23 @@ class MNTSLogger(object):
         cls.all_loggers = {}
 
     def _del(self):
-        if (self == MNTSLogger.global_logger) or (len(MNTSLogger.all_loggers) == 1):
-            self._logger.info("Deleting self...")
-            self._logger.info("Removing log file...")
-            MNTSLogger.all_loggers.pop(self._logger_name)
-            self._log_file.close()
-            del self._logger, self._log_file
-        else:
-            self._logger.info("Deleting self...")
-            MNTSLogger.all_loggers.pop(self._logger_name)
-            del self._logger
+        try:
+            if not hasattr(MNTSLogger, 'global_logger'):
+                return
+
+            if (self == MNTSLogger.global_logger) or (len(MNTSLogger.all_loggers) == 1):
+                self._logger.info("Deleting self...")
+                self._logger.info("Removing log file...")
+                MNTSLogger.all_loggers.pop(self._logger_name)
+                self._log_file.close()
+                del self._logger, self._log_file
+            else:
+                self._logger.info("Deleting self...")
+                MNTSLogger.all_loggers.pop(self._logger_name)
+                del self._logger
+        except Exception as e:
+            # i give up, MPI logger is a nightmare, this class is not thread safe 
+            pass
 
     def __str__(self):
         msg = f"This logger: \n\t{self._logger_name}\n" \
@@ -248,10 +277,16 @@ class MNTSLogger(object):
               f"Logfile: \nt\t{self._log_dir}"
         return msg
 
-    def __del__(self):
-        if self == MNTSLogger.global_logger:
-            MNTSLogger.cleanup()
+    def __repr__(self):
+        msg = f"{self.__class__.__name__}: {self._logger_name}"
+        return msg
 
+    def __del__(self):
+        try:
+            if self == MNTSLogger.global_logger:
+                MNTSLogger.cleanup()
+        except:
+            pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self == MNTSLogger.global_logger:
