@@ -191,10 +191,12 @@ class MNTSLogger(object):
         # self._logger.debug(sys.exc_info()[2])
 
     def exception_hook(self, *args):
-        self.error('Uncaught exception:')
-        self._logger.exception(args[-1], exc_info=args)
-        self.sys_hook(*args)
-        self.__del__()
+        gettrace = getattr(sys, 'gettrace', None)
+        if not gettrace():
+            self.error('Uncaught exception:')
+            self._logger.exception(args[-1], exc_info=args)
+            self.__class__.global_logger.sys_hook(*args)
+            self.__del__()
 
     def __class_getitem__(cls, item):
         # If global logger haven't be created, casually use temp file to host the log
