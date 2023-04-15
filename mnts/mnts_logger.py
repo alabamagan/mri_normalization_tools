@@ -145,6 +145,17 @@ class MNTSLogger(object):
         for l in cls.all_loggers:
             cls.all_loggers[l]._logger.level = cls.log_levels[level]
 
+    @classmethod
+    def set_global_verbosity(cls, b):
+        cls.is_verbose = b
+        for loggers in cls.all_loggers:
+            cls[loggers].set_verbose(b)
+
+        try:
+            self.global_logger.set_verbose(False)
+        except AttributeError:
+            pass
+
     def set_verbose(self, b):
         self._stream_handler.verbose=b
         self._verbose=b
