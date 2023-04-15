@@ -28,6 +28,7 @@ class MNTSLogger(object):
     ERROR         = logging.ERROR
     is_verbose    = False
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
+    log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
         if cls.global_logger is 'Init':
@@ -98,7 +99,7 @@ class MNTSLogger(object):
         # if not keep_log use a temp file to hold the messages
         self.__enter__()
 
-        formatter = LevelFormatter(fmt="[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s")
+        formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
         handler = logging.StreamHandler(self._log_file)
         handler.setFormatter(formatter)
