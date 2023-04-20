@@ -1,27 +1,32 @@
 import unittest
 from mnts.filters import MNTSFilterGraph
+from mnts.filters.data_node import *
 from mnts.filters.intensity import *
 from mnts.filters.geom import *
 from pathlib import Path
 
 test_yaml =\
 """
+DataNode: 
+
 SpatialNorm:
     out_spacing: [0.5, 0.5, 0]
+    _ext:
+        upstream: 0
 
 HuangThresholding:
     closing_kernel_size: 10
     _ext:
-        upstream: 0 
+        upstream: 1 
         is_exit: True
 
 N4ITKBiasFieldCorrection:
     _ext:
-        upstream: [0, 1]
+        upstream: [1, 2]
     
 NyulNormalizer:
     _ext:
-        upstream: [2, 1]
+        upstream: [2, 3]
         is_exit: True
 
 """
@@ -31,6 +36,7 @@ def create_graph() -> MNTSFilterGraph:
     G = MNTSFilterGraph()
 
     # Add filter nodes to the graph.
+    G.add_node(DataNode())
     G.add_node(SpatialNorm(out_spacing=[0.4492, 0.4492, 4]))
     G.add_node(HuangThresholding(closing_kernel_size=10), 0, is_exit=True)  # Use mask to better match the histograms
     G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
