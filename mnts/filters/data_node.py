@@ -2,7 +2,7 @@ from .mnts_filters import *
 from typing import Any, Optional
 import SimpleITK as sitk
 
-__all__ = ["TypeCastNode"]
+__all__ = ["TypeCastNode", "DataNode"]
 
 class DataNode(MNTSFilter):
     r"""
@@ -18,7 +18,7 @@ class DataNode(MNTSFilter):
     def data(self):
         return self._data
 
-    @property
+    @data.setter
     def data(self, input):
         self._logger.info(f"Setting data ({type(input)}) {input}")
         self._data = input
