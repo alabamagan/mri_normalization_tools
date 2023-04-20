@@ -19,12 +19,17 @@ class DataNode(MNTSFilter):
         return self._data
 
     @data.setter
-    def data(self, input):
+    def data(self, input: Any):
         self._logger.info(f"Setting data ({type(input)}) {input}")
+        if isinstance(input, str):
+            input = self.read_image(input)
         self._data = input
 
+    def clear_data(self):
+        self._data = None
+
     def filter(self,
-               intput: Any) -> Any:
+               input: str or sitk.Image) -> Any:
         if self.data is None:
             self.data = input
         return self.data

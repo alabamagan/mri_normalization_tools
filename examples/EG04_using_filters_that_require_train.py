@@ -25,8 +25,8 @@ def main():
         G.add_node(RangeRescale(0, 5000), [2,1], is_exit=True) # Label this as the
 
         """
-            Prepare the arguments
-            """
+        Prepare the arguments
+        """
         image_folder = Path(r'./example_data')
         temp_output_folder = Path(r'./example_data/output/.EG_04_temp/')
         images = [f for f in image_folder.iterdir() if f.name.find('nii') != -1]
@@ -54,8 +54,8 @@ def main():
         G.train_node(2, temp_output_folder, temp_output_folder.joinpath("EG_04_States"))
 
         """
-            Inference
-            """
+        Inference
+        """
         output_save_dir = Path(r'./example_data/output/EG_04')
         output_save_dir.mkdir(parents=True, exist_ok=True)
         G.load_node_states(2, temp_output_folder.joinpath("EG_04_States"))
