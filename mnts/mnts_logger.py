@@ -255,9 +255,11 @@ class MNTSLogger(object):
     @classmethod
     def cleanup(cls):
         # in DDP subprocess, the global logger is controlled by rank 0 process only
-        if dist.is_initialized():
-            if dist.get_rank() != 0:
-                return
+        global TORCH_EXIST
+        if TORCH_EXIST:
+            if dist.is_initialized():
+                if dist.get_rank() != 0:
+                    return
         g_l = cls.global_logger
         if g_l is None or isinstance(g_l, str):
             return
