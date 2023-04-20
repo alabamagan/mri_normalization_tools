@@ -7,7 +7,12 @@ import atexit
 from pathlib import Path
 from tqdm import *
 
-import torch.distributed as dist
+global TORCH_EXIST
+try:
+    import torch.distributed as dist
+    TORCH_EXIST = True
+except ModuleNotFoundError:
+    TORCH_EXIST = False
 
 __all__ = ['MNTSLogger', 'LogExceptions']
 
@@ -64,11 +69,13 @@ class MNTSLogger(object):
         Returns:
             :class:`Logger` object
         """
+        global TORCH_EXIST
 
         super(MNTSLogger, self).__init__()
         # before anything, check if the logger is created within a subprocess initiated by torch
-        if dist.is_initialized():
-            logger_name = logger_name + f"-DDP-{dist.get_rank():02d}"
+        if TORCH_EXIST:
+            if dist.is_initialized():
+                logger_name = logger_name + f"-DDP-{dist.get_rank():02d}"
         self._logger_name = logger_name
 
         # Do nothing if logger already created because it would have been initialized previuosly
