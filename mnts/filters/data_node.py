@@ -30,8 +30,7 @@ class DataNode(MNTSFilter):
 
     def filter(self,
                input: str or sitk.Image) -> Any:
-        if self.data is None:
-            self.data = input
+        self.data = input
         return self.data
 
 class TypeCastNode(MNTSFilter):
