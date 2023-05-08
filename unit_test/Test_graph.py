@@ -26,7 +26,7 @@ N4ITKBiasFieldCorrection:
     
 NyulNormalizer:
     _ext:
-        upstream: [2, 3]
+        upstream: [3, 2]
         is_exit: True
 
 """
@@ -37,16 +37,17 @@ def create_graph() -> MNTSFilterGraph:
 
     # Add filter nodes to the graph.
     G.add_node(DataNode())
-    G.add_node(SpatialNorm(out_spacing=[0.4492, 0.4492, 4]))
-    G.add_node(HuangThresholding(closing_kernel_size=10), 0, is_exit=True)  # Use mask to better match the histograms
-    G.add_node(N4ITKBiasFieldCorrection(), [0, 1])
-    G.add_node(NyulNormalizer(), [2, 1], is_exit=True)
+    G.add_node(SpatialNorm(out_spacing=[0.4492, 0.4492, 4]), 0)
+    G.add_node(HuangThresholding(closing_kernel_size=10), 1, is_exit=True)  # Use mask to better match the histograms
+    G.add_node(N4ITKBiasFieldCorrection(), [1, 2])
+    G.add_node(NyulNormalizer(), [3, 2], is_exit=True)
     return G
 
 class TestGraph(unittest.TestCase):
     def test_graph_print(self):
         G = create_graph()
         self.assertIsInstance(str(G), str)
+        print(G)
 
     def test_graph_from_yaml(self):
         # Create file from str
@@ -57,6 +58,9 @@ class TestGraph(unittest.TestCase):
                                    MNTSFilterGraph))
         print(G)
         Path('_test_graph.yaml').unlink()
+
+    def test_running_graph(self):
+        pass
 
 if __name__ == '__main__':
     unittest.main()
