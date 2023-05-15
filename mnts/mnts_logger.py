@@ -84,12 +84,13 @@ class MNTSLogger(object):
             return
 
         # Define attributes
-        self._log_dir = str(Path(log_dir).absolute())
-        self._verbose = verbose
+        self._log_dir      = str(Path(log_dir).absolute())
+        self._verbose      = verbose
         self._warning_hash = {}
-        self._keep_file = keep_file
-        self._logger_name = logger_name
-        self._log_level = log_level
+        self._keep_file    = keep_file
+        self._logger_name  = logger_name
+        self._log_level    = log_level
+        self._temp_file    = None
 
 
         assert log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
@@ -104,7 +105,7 @@ class MNTSLogger(object):
             pass
 
         # if not keep_log use a temp file to hold the messages
-        self.__enter__()
+        self.set_up_log_file()
 
         formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
@@ -127,12 +128,13 @@ class MNTSLogger(object):
             msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
             raise ArithmeticError(msg)
 
-    def __enter__(self):
+    def set_up_log_file(self):
         # if not keep file, log to tempfile under the parent directory of log_dir
         if not self._keep_file and MNTSLogger.global_logger is None:
             temp_file = tempfile.NamedTemporaryFile('w', dir=str(Path(self._log_dir).parent), suffix='.log')
             self._log_dir = temp_file.name
             self._log_file = temp_file
+            self._temp_file = temp_file
         elif MNTSLogger.global_logger is not None:
             self._log_file = MNTSLogger.global_logger._log_file
             self._log_dir = MNTSLogger.global_logger._log_dir
@@ -142,6 +144,34 @@ class MNTSLogger(object):
         # Make sure its absolute
         self._log_dir = str(Path(self._log_dir).absolute())
         return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self == MNTSLogger.global_logger:
+            self.info("Deleting global logger...")
+            MNTSLogger.global_logger = None
+            # Pop first to prevent infinite loop
+            MNTSLogger.all_loggers.pop(self._logger_name)
+            for loggers in dict.copy(MNTSLogger.all_loggers):
+                # exist all existing logs
+                MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
+            MNTSLogger.all_loggers.clear()
+            if not self._temp_file is None:
+                self._temp_file.close()
+        else:
+            # If self is just an ordinary logger
+            if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
+                MNTSLogger.all_loggers.pop(self._logger_name)
+            self.debug("Deleting this logger...")
+
+        # Remove all handler from loggers
+        try:
+            self._logger.removeHandler(self._file_handler)
+            self._logger.removeHandler(self._stream_handler)
+        except:
+            pass
 
     @property
     def _logger(self):
@@ -311,29 +341,6 @@ class MNTSLogger(object):
         except:
             pass
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self == MNTSLogger.global_logger:
-            self.info("Deleting global logger...")
-            MNTSLogger.global_logger = None
-            # Pop first to prevent infinite loop
-            MNTSLogger.all_loggers.pop(self._logger_name)
-            for loggers in dict.copy(MNTSLogger.all_loggers):
-                # exist all existing logs
-                MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
-            MNTSLogger.all_loggers.clear()
-            self._log_file.close() # close to delete tempfile
-        else:
-            # If self is just an ordinary logger
-            if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
-                MNTSLogger.all_loggers.pop(self._logger_name)
-            self.debug("Deleting this logger...")
-
-        # Remove all handler from loggers
-        try:
-            self._logger.removeHandler(self._file_handler)
-            self._logger.removeHandler(self._stream_handler)
-        except:
-            pass
 
 class LogExceptions(object):
     def __init__(self, callable):
