@@ -190,7 +190,7 @@ class MNTSLogger(object):
             cls[loggers].set_verbose(b)
 
         try:
-            self.global_logger.set_verbose(False)
+            cls.global_logger.set_verbose(False)
         except AttributeError:
             pass
 
