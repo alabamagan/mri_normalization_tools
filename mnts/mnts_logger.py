@@ -178,10 +178,18 @@ class MNTSLogger(object):
         return logging.getLogger(self._logger_name)
 
     @classmethod
-    def set_log_level(cls, level):
+    def set_global_log_level(cls, level):
         assert level in cls.log_levels, "Log levels available are: {}".format(','.join(cls.log_levels.keys()))
+        cls.log_level = cls.log_levels[level]
         for l in cls.all_loggers:
-            cls.all_loggers[l]._logger.level = cls.log_levels[level]
+            cls.all_loggers[l].set_log_level(level)
+
+    def set_log_level(self, level):
+        assert level in self.__class__.log_levels, \
+            "Log levels available are: {}".format(','.join(self.__class__.log_levels.keys()))
+
+        self.log_levels = level
+        self._logger.setLevel(self.__class__.log_levels[level])
 
     @classmethod
     def set_global_verbosity(cls, b):
