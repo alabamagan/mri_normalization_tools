@@ -31,7 +31,7 @@ class Test_MNTSLogger(unittest.TestCase):
     #  Tests that the log level can be set. Tags: [happy path]
     def test_setting_log_level(self):
         logger = MNTSLogger()
-        logger.set_log_level('debug')
+        logger.set_global_log_level('debug')
         assert logger._logger.level == logging.DEBUG
 
     def test_creating_multiple_loggers_with_different_names(self):
