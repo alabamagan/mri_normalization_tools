@@ -1,0 +1,29 @@
+# Summary
+
+Sample data are pulled online from public datasets. The redistribution here is restricted by the agreements set out by
+the providers as follow.
+
+# Sample 1
+
+Obtained from URL: https://www.dicomlibrary.com/meddream/?study=1.2.826.0.1.3680043.8.1055.1.20111102150758591.92402465.76095170
+
+# Sample 2
+
+Obtained from URL: https://wiki.cancerimagingarchive.net/display/Public/NSCLC-Radiomics#160568542410a86c08104dd29dadd1752b9bac29
+
+## LICENSE
+
+Data usage in this repo complies with policies set out by TCIA.
+Please see https://wiki.cancerimagingarchive.net/display/Public/Data+Usage+Policies+and+Restrictions for details.
+
+### Data Citation
+
+Aerts, H. J. W. L., Wee, L., Rios Velazquez, E., Leijenaar, R. T. H., Parmar, C., Grossmann, P., Carvalho, S., Bussink, J., Monshouwer, R., Haibe-Kains, B., Rietveld, D., Hoebers, F., Rietbergen, M. M., Leemans, C. R., Dekker, A., Quackenbush, J., Gillies, R. J., Lambin, P. (2014). Data From NSCLC-Radiomics (version 4) [Data set]. The Cancer Imaging Archive. https://doi.org/10.7937/K9/TCIA.2015.PF0M9REI 
+
+### Publication Citation
+
+Aerts, H. J. W. L., Velazquez, E. R., Leijenaar, R. T. H., Parmar, C., Grossmann, P., Carvalho, S., Bussink, J., Monshouwer, R., Haibe-Kains, B., Rietveld, D., Hoebers, F., Rietbergen, M. M., Leemans, C. R., Dekker, A., Quackenbush, J., Gillies, R. J., Lambin, P. (2014, June 3). Decoding tumour phenotype by noninvasive imaging using a quantitative radiomics approach. Nature Communications. Nature Publishing Group. https://doi.org/10.1038/ncomms5006  (link)
+
+### TCIA Citation
+
+Clark K, Vendt B, Smith K, Freymann J, Kirby J, Koppel P, Moore S, Phillips S, Maffitt D, Pringle M, Tarbox L, Prior F. The Cancer Imaging Archive (TCIA): Maintaining and Operating a Public Information Repository, Journal of Digital Imaging, Volume 26, Number 6, December, 2013, pp 1045-1057. https://doi.org/10.1007/s10278-013-9622-7

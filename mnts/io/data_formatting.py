@@ -256,8 +256,8 @@ class Dcm2NiiConverter:
 
         for ss in series:
             # Read file
-            outimage, reader = self.read_images(f, ss)
-            constructed_outname, dcm_tags = self.construct_ouputpath(reader)
+            outimage, dcm_files = self.read_images(f, ss)
+            constructed_outname, dcm_tags = self.construct_ouputpath(dcm_files)
 
             # Skip if dicom tag (0008|103e) contains substring in seq_filters
             seq_filters = self.seq_filters
@@ -277,10 +277,20 @@ class Dcm2NiiConverter:
                         self.logger.warning("skipping ", tags['0008|103e'], "from ", f)
                         continue
 
-                    # Write image
-            self.logger.info(f"Writting: {constructed_outname}")
-            outimage.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
-            sitk.WriteImage(outimage, constructed_outname)
+            # Write image
+            if isinstance(outimage, sitk.Image):
+                self.logger.info(f"Writting: {constructed_outname}")
+                outimage.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
+                sitk.WriteImage(outimage, constructed_outname)
+            elif isinstance(outimage, dict):
+                self.logger.info(f"Writing segmentation files: {pprint.pformat(outimage.keys())}")
+                for key, seg in outimage.items():
+                    # alter filename to attach segmentation
+                    suffix = key.replace(' ', '-')
+                    _outname = constructed_outname.replace('.nii.gz', f"_{suffix}.nii.gz")
+                    seg.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
+                    self.logger.info(f"Writing {_outname}")
+                    sitk.WriteImage(seg, _outname)
 
             # Write metadata
             if self.dump_meta_data:
@@ -289,8 +299,6 @@ class Dcm2NiiConverter:
                     self.logger.warning(f"Overwriting {str(meta_data_dir)}")
                 with open(str(meta_data_dir), 'w') as jf:
                     json.dump(dcm_tags, jf)
-
-            del reader
         pass
 
     def read_images(self, f, ss) -> Tuple[sitk.Image, List[str]]:
@@ -357,9 +365,22 @@ class Dcm2NiiConverter:
         # Get the segmentation from the pixel data
         seg = reader.read(ds)
 
-        self.logger.info(f"Segmentation found: {seg.available_segments}")
+        # Identify the tag names
+        segment_labels = {}
+        for val in seg.available_segments:
+            try:
+                # Tag is defined by DICOM standard to be "Segment Description"
+                label_name = seg.segment_infos[val][0x0062, 0x0006].value
+            except:
+                label_name = 'Unknown'
+            segment_labels[val] = label_name
 
-        return segmentation
+        out_dict = {}
+        for val in segment_labels:
+            out_dict[segment_labels[val]] = seg.segment_image(val)
+
+        self.logger.info(f"Segmentation found: {segment_labels}")
+        return out_dict
 
 
 def dicom2nii(folder: str,
