@@ -46,8 +46,8 @@ class Dcm2NiiConverter:
             Flag indicating whether to use patient ID in the file name.
         use_top_level_fname (bool, optional):
             Flag indicating whether to use top level file name.
-        input (str or Path):
-            Path to the input file.
+        root_dir (str or Path):
+            Root path that is referenced if `use_top_level_fname` is specified.
         idlist (list or tuple, optional):
             List of IDs to process. If not None, only IDs in this list will be processed.
         prefix (str, optional):
@@ -79,7 +79,7 @@ class Dcm2NiiConverter:
                  idglobber          : Optional[str]                 = None,
                  use_patient_id     : Optional[bool]                = False,
                  use_top_level_fname: Optional[bool]                = False,
-                 input              : Union[str, Path]              = None,
+                 root_dir           : Union[str, Path]              = None,
                  idlist             : Optional[Union[List, Tuple]]  = None,
                  prefix             : Optional[str]                 = "",
                  debug              : Optional[bool]                = False,
@@ -91,7 +91,7 @@ class Dcm2NiiConverter:
         self.idglobber = idglobber
         self.use_patient_id = use_patient_id
         self.use_top_level_fname = use_top_level_fname
-        self.input = input
+        self.root_dir = root_dir
         self.idlist = idlist
         self.prefix = prefix
         self.debug = debug
@@ -160,8 +160,8 @@ class Dcm2NiiConverter:
 
         # Handle the case when each patient has subfolders for each series
         if self.use_top_level_fname:
-            path = str(folder.replace(str(Path(input).absolute()), '/')).lstrip(os.sep) # lstrip to make sure its not starting from /
-            self.logger.debug(f"Updated folder path: {folder.replace(str(Path(input).absolute()), '/')}")
+            path = str(folder.replace(str(Path(self.root_dir).absolute()), '/')).lstrip(os.sep) # lstrip to make sure its not starting from /
+            self.logger.debug(f"Updated folder path: {folder.replace(str(Path(self.root_dir).absolute()), '/')}")
             self.logger.debug(f"Path components: {path.split(os.sep)}")
             id_from_path = path.split(os.sep)[0]
         self.logger.debug(f"Prefix ID from path: {id_from_path}")
@@ -187,7 +187,7 @@ class Dcm2NiiConverter:
             try:
                 tags[dctag] = headerreader.GetMetaData(dctag).rstrip().rstrip(' ')
             except RuntimeError:
-                logger.warning(f"Tag [{dctag}] missing for image {f}")
+                self.logger.warning(f"Tag [{dctag}] missing for image {dcm_files[0]}")
                 tags[dctag] = 'Missing'
 
         # Warn if pid and original prefix is not the same
@@ -253,6 +253,9 @@ class Dcm2NiiConverter:
 
         self.logger.debug(f"Reading from: {f}")
         series = sitk.ImageSeriesReader_GetGDCMSeriesIDs(f)
+
+        if not len(series):
+            self.logger.warning(f"No series was found in {f}")
 
         for ss in series:
             # Read file
@@ -389,15 +392,17 @@ def dicom2nii(folder: str,
               idglobber: str = None,
               use_patient_id: bool = False,
               use_top_level_fname: bool = False,
-              input = None,
+              root_dir = None,
               idlist = None,
               prefix = "",
               debug = False,
               dump_meta_data = False) -> None:
-    """
-    Covert a series under specified folder into an nii.gz image.
+    """Covert a series under specified folder into an nii.gz image.
     This tries to assign a unique ID to each of the converted images, either based on their patient id DICOM tag or
     the folder containing the image series.
+
+    See Also:
+        :class:`Dcm2NiiConvertre`
     """
 
     workerid = mpi.current_process().name
@@ -410,7 +415,7 @@ def dicom2nii(folder: str,
                                      idglobber,
                                      use_patient_id,
                                      use_top_level_fname,
-                                     input,
+                                     root_dir,
                                      idlist,
                                      prefix,
                                      debug,
