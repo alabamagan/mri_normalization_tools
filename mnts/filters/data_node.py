@@ -35,8 +35,12 @@ class DataNode(MNTSFilter):
 
 class TypeCastNode(MNTSFilter):
     r"""
-    Cast the type to specific datatype using sitk.Cast. However, you are recommended to keep a clear track of the type
-    casting within a pipeline or a graph.
+    A class to cast the type to a specific datatype using `sitk.Cast`.
+    It is recommended to keep a clear track of the type casting within a pipeline or a graph.
+
+    Attributes:
+        target_type (int): The target type to which the input will be casted.
+        target_type_name (str): The name of the target type.
     """
     def __init__(self,
                  target_type: int = sitk.sitkInt16):
@@ -55,19 +59,40 @@ class TypeCastNode(MNTSFilter):
         }
 
     @property
-    def target_type(self):
+    def target_type(self) -> Any:
+        r"""Return the target type as sitk code."""
         return self._target_type
 
     @target_type.setter
-    def target_type(self, val):
+    def target_type(self, val) -> None:
+        r"""Set the target type with sitk codes."""
         self._target_type = val
 
     @property
-    def target_type_name(self):
+    def target_type_name(self) -> str:
+        r"""Return the target type as string."""
         return self._target_type_name
 
-    def filter(self, input):
+    def filter(self, input: sitk.Image, ref_img: Optional[sitk.Image]=None) -> sitk.Image:
+        """Filter method to cast the type of the input.
+
+        If `ref_img` is not None, then the type cast references the type of it.
+        Otherwise, the type is casted as the attribute `self._target_type`.
+
+        Args:
+            input (sitk.Image):
+                The input to be casted.
+            ref_img (sitk.Image, optional):
+                The reference image to determine the type. Defaults to None.
+
+        Returns:
+            The input casted to the target type.
+
+        Raises:
+            ArithmeticError: If the type cast fails.
+        """
         input = self.read_image(input)
+        target_type = self._target_type if ref_img is None else ref_img.GetPixelID()
         try:
             # Overflow protection
             range = self._overflow_protection.get(self.target_type, None)
