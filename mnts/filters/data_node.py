@@ -97,7 +97,14 @@ class TypeCastNode(MNTSFilter):
             # Overflow protection
             range = self._overflow_protection.get(self.target_type, None)
             if range is not None:
-                input = sitk.Clamp(input, *range)
+                f = sitk.MinimumMaximumImageFilter()
+                f.Execute(input)
+
+                max_val = f.GetMaximum()
+                min_val = f.GetMinimum()
+
+                if max_val > range[1] or min_val < range[0]:
+                    input = sitk.Clamp(input, *range)
             return sitk.Cast(input, self._target_type)
         except Exception as e:
             raise ArithmeticError(f"Type cast failed in filter with parameters: {self.__str__()}") from e
