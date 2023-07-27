@@ -30,7 +30,7 @@ class ZScoreNorm(LinearRescale):
         if not mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
             input_mean = np_im[np_mask != 0].mean()
-            input_std  = np_im[np_mask != 0].max()
+            input_std  = np_im[np_mask != 0].std()
         else:
             f = sitk.StatisticsImageFilter()
             f.Execute(input)
