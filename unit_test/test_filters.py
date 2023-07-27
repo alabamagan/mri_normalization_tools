@@ -1,4 +1,5 @@
 import unittest
+from utils import create_dummy_image, create_dummy_segmentation
 import mnts
 
 from mnts.filters.geom import *
@@ -45,3 +46,40 @@ class Test_Filters(unittest.TestCase):
         filter = TypeCastNode(sitk.sitkUInt8)
         output = filter.filter(self.test_input, dummy)
         self.assertEqual(output.GetPixelID(), dummy.GetPixelID())
+
+
+class Test_IntensityFilters(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.logger = MNTSLogger['Test Dicom2nii']
+        cls.logger.set_verbose(True)
+        MNTSLogger.set_global_log_level('debug')
+
+        # Load default input
+        cls.test_input = create_dummy_image([100, 100, 100])
+        cls.test_segment = create_dummy_segmentation(size=[100, 100, 100],
+                                                     center=[50, 50, 50],
+                                                     cube_size=25)
+
+    def test_ZscoreNorm(self):
+        filter = ZScoreNorm()
+        output = filter(self.test_input, self.test_segment)
+
+        npout  = sitk.GetArrayFromImage(output)
+        npmask = sitk.GetArrayFromImage(self.test_segment)
+        mu    = npout[npmask != 0].mean()
+        sigma = npout[npmask != 0].std()
+        self.assertAlmostEqual(mu   , 0., delta = 1E-10)
+        self.assertAlmostEqual(sigma, 1., delta = 1E-10)
+
+    def test_LinearRescale(self):
+        target_mu, target_sigma = 10, 20
+        filter = LinearRescale(mean = target_mu, std = target_sigma)
+        output = filter(self.test_input, self.test_segment)
+
+        npout  = sitk.GetArrayFromImage(output)
+        npmask = sitk.GetArrayFromImage(self.test_segment)
+        mu    = npout[npmask != 0].mean()
+        sigma = npout[npmask != 0].std()
+        self.assertAlmostEqual(mu   , target_mu   , delta = 1E-10)
+        self.assertAlmostEqual(sigma, target_sigma, delta = 1E-10)
