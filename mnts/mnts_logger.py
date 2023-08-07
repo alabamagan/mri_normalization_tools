@@ -202,6 +202,10 @@ class MNTSLogger(object):
         except AttributeError:
             pass
 
+    @classmethod
+    def get_global_verbosity(cls):
+        return cls.is_verbose
+
     def set_verbose(self, b):
         self._stream_handler.verbose=b
         self._verbose=b
