@@ -16,6 +16,8 @@ def dicom2nii(a, logger):
         if not Path(a.output).is_dir():
             logger.error("Error making output directory.")
             return
+    if a.verbose:
+        MNTSLogger.set_global_log_level('debug')
 
     logger.info(f"Specified ID globber: {a.idglobber}")
     logger.info(f"Use patient ID: {a.usepid}")
@@ -30,7 +32,7 @@ def dicom2nii(a, logger):
                     idglobber = a.idglobber,
                     use_patient_id = a.usepid,
                     use_top_level_fname = a.usefname,
-                    input = a.input,
+                    root_dir = a.input,
                     idlist = ids,
                     prefix = a.prefix,
                     debug = a.debug,
@@ -63,6 +65,8 @@ def console_entry(raw_args=None):
                         help='Use patient id as file id.')
     parser.add_argument('--log', action='store_true', dest='log',
                         help='Keep log file under ./dicom2nii.log')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Debug log messages')
     a = parser.parse_args(raw_args)
 
     with MNTSLogger('./dicom2nii.log', logger_name='dicom2nii', verbose=True, keep_file=a.log) as logger:
