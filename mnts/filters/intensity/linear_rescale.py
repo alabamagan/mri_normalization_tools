@@ -50,13 +50,13 @@ class LinearRescale(MNTSIntensityBase, MNTSFilter):
                 input: Union[str, Path, sitk.Image],
                 mask: Union[str, Path, sitk.Image] = None):
         input = self.read_image(input)
-        mask = self.read_image(input)
+        mask = self.read_image(mask)
 
-        if mask is None:
+        if not mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
 
             input_mean = np_im[np_mask != 0].mean()
-            input_std  = np_im[np_mask != 0].max()
+            input_std  = np_im[np_mask != 0].std()
         else:
             f = sitk.StatisticsImageFilter()
             f.Execute(input)
