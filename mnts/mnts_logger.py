@@ -187,7 +187,7 @@ class MNTSLogger(object):
     def set_log_level(self, level):
         assert level in self.__class__.log_levels, \
             "Log levels available are: {}".format(','.join(self.__class__.log_levels.keys()))
-
+        self.info("Setting log level {} -> {}".format(self._log_level, level))
         self.log_levels = level
         self._logger.setLevel(self.__class__.log_levels[level])
 
