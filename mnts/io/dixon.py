@@ -1,13 +1,15 @@
-import pydicom
 import SimpleITK as sitk
 import numpy
-from typing import Iterable, Union, Optional, List
+from typing import Iterable, Union, Optional, List, Dict, Tuple
 from pathlib import Path
 
+try:
+    import pydicom
+    __all__ = ['DIXON_dcm_to_images']
+except:
+    __all__ = []
 
-__all__ = ['DIXON_dcm_to_images']
-
-def DIXON_dcm_to_images(dcm_files: List[Path]):
+def DIXON_dcm_to_images(dcm_files: List[Path]) -> Dict[Tuple, sitk.Image]:
     r"""Converts a list of DIXON DICOM files into SimpleITK images.
 
     This function reads a list of DIXON DICOM files, identifies the unique
