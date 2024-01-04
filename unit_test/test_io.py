@@ -1,4 +1,5 @@
 from mnts.io import pydicom_read_series
+from mnts.io.dixon import *
 from mnts.mnts_logger import MNTSLogger
 import unittest
 from pathlib import Path
@@ -24,4 +25,9 @@ class Test_IO(unittest.TestCase):
     def test_pydicom_read_series(self):
         d = pydicom_read_series(self.dcm_dir)
         self.logger.info(f"Found sequeces: [{','.join(d.keys())}]")
+        self.assertGreater(len(d), 0)
+
+    def test_read_dixon(self):
+        d = pydicom_read_series(self.dcm_dir)
+        d = DIXON_dcm_to_images(d[list(d.keys())[0]])
         self.assertGreater(len(d), 0)
