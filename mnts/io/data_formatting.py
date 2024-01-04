@@ -11,8 +11,9 @@ sitk.ProcessObject_GlobalWarningDisplayOff()
 from functools import partial
 from pathlib import Path
 from mnts.utils.preprocessing import recursive_list_dir
-from typing import Optional, Union, List, Tuple, Iterable
+from typing import Optional, Union, List, Tuple, Iterable, Dict
 from ..mnts_logger import MNTSLogger
+from tqdm.auto import tqdm
 
 # These are optional packages installed by `pip install -e .[dicom]`
 try:
@@ -23,7 +24,7 @@ except:
     PYDICOM_SEG_AVAILABLE = False
 
 
-__all__ = ['dicom2nii', 'batch_dicom2nii']
+__all__ = ['dicom2nii', 'batch_dicom2nii', 'pydicom_read_series']
 
 
 class Dcm2NiiConverter:
@@ -456,4 +457,66 @@ def batch_dicom2nii(folderlist, out_dir,
         for f in folderlist:
             dicom2nii(f, out_dir=out_dir, **kwargs)
 
+
+def pydicom_read_series(dcmdir: Path, progress_bar: bool = False) -> Dict[str, List[Path]]:
+    r"""Reads DICOM series from a directory and organizes them by SOP Instance UID.
+
+    This function traverses a directory for DICOM files, reads them using pydicom,
+    and returns a dictionary organizing the file paths by their SOP Instance UID.
+    If `progress_bar` is enabled, it displays a progress bar during the operation.
+
+    Args:
+      dcmdir (Path):
+        The directory path to search for DICOM files.
+      progress_bar (bool, Optional):
+        Flag to enable or disable a progress bar during processing. Defaults to False.
+
+    Returns:
+      Dict[str, List[Path]]:
+        A dictionary where each key is a SOP Instance UID and the value is a list
+        of file paths corresponding to that UID, sorted in ascending order.
+
+    Raises:
+      FileNotFoundError: If no DICOM files are found in the provided directory.
+
+    .. notes::
+        The DICOM files are identified by attempting to read them using pydicom and
+        checking for a valid SOP Instance UID. Files that cannot be read or do not
+        contain a valid UID are silently ignored unless they cause the list to be empty,
+        in which case a FileNotFoundError is raised.
+
+        This function uses `pydicom.dcmread` with `specific_tags` parameter to optimize
+        reading speed by only fetching the necessary tags.
+
+    """
+    dcmdir = Path(dcmdir)
+
+    # Iterate and add all files into a list
+    files = []
+    for r, d, f in os.walk(dcmdir):
+        if len(f) > 0:
+            files.extend([Path(r) / ff for ff in f])
+
+    # Check each file to see if they are dicom using pydicom
+    dcmlist = []
+    for ff in tqdm(files, disable=not progress_bar):
+        try:
+            dcmlist.append((ff, pydicom.dcmread(ff, specific_tags=[pydicom.tag.Tag(0x0020,0x000e)])))
+        except pydicom.errors.InvalidDicomError:
+            # don't add to list if can't read it
+            pass
+
+    if not len(dcmlist):
+        raise FileNotFoundError(f"No DICOM files were found in directory: {dcmdir}")
+
+    out_dict = {}
+    for fpath, dcm in dcmlist:
+        if not dcm.SeriesInstanceUID in out_dict:
+            out_dict[dcm.SeriesInstanceUID] = []
+        out_dict[dcm.SeriesInstanceUID].append(fpath)
+
+    for keys in out_dict:
+        out_dict[keys].sort()
+
+    return out_dict
 
