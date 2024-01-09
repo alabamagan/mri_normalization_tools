@@ -30,6 +30,7 @@ def dicom2nii(a, logger):
                     workers = a.num_workers,
                     seq_filters = None,
                     idglobber = a.idglobber,
+                    check_im_type = a.check_image_type_tag,
                     use_patient_id = a.usepid,
                     use_top_level_fname = a.usefname,
                     root_dir = a.input,
@@ -51,6 +52,9 @@ def console_entry(raw_args=None):
                         help='Specify the globber to glob the ID from the DICOM paths.')
     parser.add_argument('-n', '--num-workers', type=int, default=None,
                         help="Specify number of workers. If not specified, use all CPU cores.")
+    parser.add_argument('--check-image-type-tag', action='store_true',
+                        help='If specified, check the dicom tag (0008,0008) for differences. This is implmented to '
+                             'deal with DIXON scans mainly.')
     parser.add_argument('--dump-dicom-tags', action='store_true',
                         help="If this option is specified, the dicom tags will be generated to a json text file.")
     parser.add_argument('--debug', action='store_true',
