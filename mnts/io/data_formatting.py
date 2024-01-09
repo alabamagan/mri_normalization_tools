@@ -19,6 +19,7 @@ from tqdm.auto import tqdm
 try:
     import pydicom
     import pydicom_seg
+    from mnts.io.dixon import DIXON_dcm_to_images
     PYDICOM_SEG_AVAILABLE = True
 except:
     PYDICOM_SEG_AVAILABLE = False
@@ -43,6 +44,9 @@ class Dcm2NiiConverter:
             Sequence filters for skipping DICOM series based on DICOM tag (0008|103e).
         idglobber (str, optional):
             Regex for extracting ID from the path.
+        check_im_type (bool, optional):
+            If true, check DICOM tag (0008,0008) of the series and generate indiivdual image
+            for unique (0008,0008). Useful when handling DIXON. Default to `False`.
         use_patient_id (bool, optional):
             Flag indicating whether to use patient ID in the file name.
         use_top_level_fname (bool, optional):
@@ -78,6 +82,7 @@ class Dcm2NiiConverter:
                  out_dir            : str                           = None,
                  seq_filters        : Optional[Union[list, str]]    = None,
                  idglobber          : Optional[str]                 = None,
+                 check_im_type      : Optional[bool]                = False,
                  use_patient_id     : Optional[bool]                = False,
                  use_top_level_fname: Optional[bool]                = False,
                  root_dir           : Union[str, Path]              = None,
@@ -90,6 +95,7 @@ class Dcm2NiiConverter:
         self.out_dir = out_dir
         self.seq_filters = seq_filters
         self.idglobber = idglobber
+        self.check_im_type = check_im_type
         self.use_patient_id = use_patient_id
         self.use_top_level_fname = use_top_level_fname
         self.root_dir = root_dir
@@ -287,14 +293,18 @@ class Dcm2NiiConverter:
                 outimage.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
                 sitk.WriteImage(outimage, constructed_outname)
             elif isinstance(outimage, dict):
-                self.logger.info(f"Writing segmentation files: {pprint.pformat(outimage.keys())}")
-                for key, seg in outimage.items():
+                self.logger.info(f"Writing multiple files: {pprint.pformat(outimage.keys())}")
+                for key, img in outimage.items():
                     # alter filename to attach segmentation
-                    suffix = key.replace(' ', '-')
-                    _outname = constructed_outname.replace('.nii.gz', f"_{suffix}.nii.gz")
-                    seg.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
+                    if not constructed_outname.find("DIXON") >=0:
+                        suffix = key.replace(' ', '-')
+                        _outname = constructed_outname.replace('.nii.gz', f"_{suffix}.nii.gz")
+                        img.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
+                    else:
+                        #! Somewhat hardcode to deal with DIXON
+                        _outname = constructed_outname.replace('DIXON', 'DIXON-' + key)
                     self.logger.info(f"Writing {_outname}")
-                    sitk.WriteImage(seg, _outname)
+                    sitk.WriteImage(img, _outname)
 
             # Write metadata
             if self.dump_meta_data:
@@ -306,7 +316,7 @@ class Dcm2NiiConverter:
         pass
 
     def read_images(self, f, ss) -> Tuple[sitk.Image, List[str]]:
-        r"""Read iamges from folder `f` that is identified by SID `ss`
+        r"""Read images from folder `f` that is identified by SID `ss`
 
         Args:
             f (str):
@@ -330,9 +340,36 @@ class Dcm2NiiConverter:
             ds = pydicom.dcmread(dcm_files[0])
             # Check if the file contains segmentation data
             if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.66.4':
+                # warn if check im_type is also on
+                if self.check_im_type:
+                    self.logger.warning("Check image type option is enabled, but segmented.")
+
                 self.logger.info(f"Detect segmentation files: {pprint.pformat(dcm_files)}")
                 outimage = self.read_segmentation(dcm_files)
                 return outimage, dcm_files
+            elif self.check_im_type:
+                # perform image type check, this is mainly written for DIXON
+                self.logger.info("Proceed with image type check...")
+                _outimage = DIXON_dcm_to_images(dcm_files)
+                if len(_outimage) > 1:
+                    # rewrite the dictionary keys
+                    outimage = {}
+                    for k, im in _outimage.items():
+                        if len(k) < 4:
+                            outimage['-'.join(k)] = im
+                        if k[3] == "W":
+                            # DIXON water image (fat-suppressed)
+                            outimage['FS'] = im
+                        elif k[3] == "IP":
+                            # DIXON regular image
+                            outimage['IP'] = im
+                        else:
+                            outimage['-'.join(k)] = im
+                else:
+                    # if there's only one image type, just do things regularly
+                    outimage = list(_outimage.values())[0]
+                return outimage, dcm_files
+
 
         # read image
         reader = sitk.ImageSeriesReader()
@@ -391,6 +428,7 @@ def dicom2nii(folder: str,
               out_dir: str = None,
               seq_filters: list or str = None,
               idglobber: str = None,
+              check_im_type = False,
               use_patient_id: bool = False,
               use_top_level_fname: bool = False,
               root_dir = None,
@@ -414,6 +452,7 @@ def dicom2nii(folder: str,
                                      out_dir,
                                      seq_filters,
                                      idglobber,
+                                     check_im_type,
                                      use_patient_id,
                                      use_top_level_fname,
                                      root_dir,
