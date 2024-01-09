@@ -5,6 +5,7 @@ import warnings
 from shutil import *
 from pprint import pformat, pprint
 from ..mnts_logger import MNTSLogger
+from typing import *
 
 __all__ = ['repeat_zip']
 
@@ -226,16 +227,16 @@ def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
             warnings.warn(msg)
 
     # iterate and put files where they belong
-for name, row in df.iterrows():
-    src_dir = row['file_dir']
-    mov_to = target_dir / row['Unified Modality']
-    if not mov_to.is_dir():
-        mov_to.mkdir(exist_ok=True, parents=True)
+    for name, row in df.iterrows():
+        src_dir = row['file_dir']
+        mov_to = target_dir / row['Unified Modality']
+        if not mov_to.is_dir():
+            mov_to.mkdir(exist_ok=True, parents=True)
 
-    # print(row)
-    if not src_dir.parent == (mov_to / name):
-        MNTSLogger['utils'].info(f"Moving {src_dir} -> {mov_to / name}")
-        try:
-            move(str(src_dir), mov_to)
-        except Exception as e:
-            warnings.warn(f"Error when trying to move: {name}; {e}")
+        # print(row)
+        if not src_dir.parent == (mov_to / name):
+            MNTSLogger['utils'].info(f"Moving {src_dir} -> {mov_to / name}")
+            try:
+                move(str(src_dir), mov_to)
+            except Exception as e:
+                warnings.warn(f"Error when trying to move: {name}; {e}")
