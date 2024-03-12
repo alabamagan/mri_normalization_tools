@@ -6,6 +6,7 @@ import tempfile
 import atexit
 from pathlib import Path
 from tqdm import *
+import time
 
 global TORCH_EXIST
 try:
@@ -270,8 +271,11 @@ class MNTSLogger(object):
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
-            while cls.global_logger is None:
-                time.sleep(0.5)
+            if cls.global_logger is None:
+                cls.global_logger = MNTSLogger('./default.log', logger_name='default',
+                                           verbose=True, keep_file=False)
+                return MNTSLogger[item]
+
             cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(
                 str(item)
             ))
