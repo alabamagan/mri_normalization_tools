@@ -256,7 +256,10 @@ class MNTSLogger(object):
         if not gettrace():
             self.error('Uncaught exception:')
             self._logger.exception(args[-1], exc_info=args)
-            self.__class__.global_logger.sys_hook(*args)
+            try:
+                self.__class__.global_logger.sys_hook(*args)
+            except AttributeError:
+                pass
             self.__del__()
 
     def __class_getitem__(cls, item):
@@ -267,6 +270,8 @@ class MNTSLogger(object):
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
+            while cls.global_logger is None:
+                time.sleep(0.5)
             cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(
                 str(item)
             ))
