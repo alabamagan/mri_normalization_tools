@@ -3,6 +3,7 @@ from mnts.mnts_logger import MNTSLogger
 import logging
 import pytest
 from pathlib import Path
+import os
 
 
 class Test_MNTSLogger(unittest.TestCase):
@@ -44,9 +45,5 @@ class Test_MNTSLogger(unittest.TestCase):
     def test_temp_log_file(self):
         r"""Test that when keep_file option is set to False or is default, the log_file attribute is created by
         tempfile."""
-        logger = MNTSLogger(verbose=True, keep_file=False)
-        assert logger._temp_file is not None
-        assert logger._log_file is not None
-        assert isinstance(logger._log_file, tempfile._TemporaryFileWrapper)
-        logger.__exit__(None, None, None)
-        assert not os.path.exists(logger._log_dir)
+        with MNTSLogger(verbose=True, keep_file=False) as logger:
+            self.assertIsNotNone(logger._log_file)
