@@ -110,15 +110,17 @@ class MNTSLogger(object):
 
         formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
-        handler = logging.StreamHandler(self._log_file)
-        handler.setFormatter(formatter)
-        self._file_handler = handler
+        if keep_file:
+            handler = logging.StreamHandler(self._log_file)
+            handler.setFormatter(formatter)
+            self._file_handler = handler
+            self._logger.addHandler(self._file_handler)
+
 
         # create a new logger if requested logger was not already created
         if not logger_name in MNTSLogger.all_loggers:
             self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
             self._stream_handler.setFormatter(formatter)
-            self._logger.addHandler(self._file_handler)
             self._logger.addHandler(self._stream_handler)
             self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
                                                                 MNTSLogger.global_logger._logger.level)
@@ -139,6 +141,7 @@ class MNTSLogger(object):
         elif MNTSLogger.global_logger is not None:
             self._log_file = MNTSLogger.global_logger._log_file
             self._log_dir = MNTSLogger.global_logger._log_dir
+            self._temp_file = MNTSLogger.global_logger._temp_file
         else:
             self._log_file = open(self._log_dir, 'a')
             self._log_dir = self._log_file.name
@@ -166,6 +169,10 @@ class MNTSLogger(object):
             if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
                 MNTSLogger.all_loggers.pop(self._logger_name)
             self.debug("Deleting this logger...")
+
+            # If the final logger left is global, delete it too
+            if len(MNTSLogger.all_loggers) == 1:
+                MNTSLogger.global_logger.__exit__(exc_type, exc_val, exc_tb)
 
         # Remove all handler from loggers
         try:
@@ -216,13 +223,9 @@ class MNTSLogger(object):
 
     def log_print(self, msg, level=logging.INFO):
         self._logger.log(level, msg)
-        # if self._verbose:
-        #     print(msg)
 
     def log_print_tqdm(self, msg, level=logging.INFO):
         self._logger.log(level, msg)
-        # if self._verbose:
-        #     tqdm.write(msg)
 
     def info(self, msg):
         self.log_print_tqdm(msg, level=logging.INFO)
