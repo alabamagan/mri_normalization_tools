@@ -85,6 +85,7 @@ class MNTSLogger(object):
             return
 
         # Define attributes
+        self._log_file     = None
         self._log_dir      = str(Path(log_dir).absolute())
         self._verbose      = verbose
         self._warning_hash = {}
