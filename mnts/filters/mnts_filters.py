@@ -37,6 +37,7 @@ class MNTSFilter(object):
             input = sitk.ReadImage(str(input))
 
         if not isinstance(input, sitk.Image):
+            msg = f"Cannot read file from: {str(input.absolute())}"
             raise IOError
         return input
 
