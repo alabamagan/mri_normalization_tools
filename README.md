@@ -50,9 +50,8 @@ pip install git+https://github.com/alabamagan/mri_normalization_tools
 
 ## General Example
 
-> ![Graph](./img/05_graph.png)
->
-> Caption: Green node is the input node, blue node is the output node.
+![Graph](./img/05_graph.png)
+ Caption: Green node is the input node, blue node is the output node.
 
 ```python
 from pathlib import Path
@@ -99,6 +98,58 @@ if __name__ == '__main__':
         fname = output_save_dir.joinpath(im.name).resolve().__str__()
         print(f"Saving to {fname}")
         sitk.WriteImage(save_im[4], fname)  # RangeRescale output at node index 3
+```
+
+## Using normalization graph
+
+Some normalization method require training. For example, most piecewise linear intensity normalization algorithm requries establishing feature points on a graph prior to usage. This package offers API for training these nodes. 
+
+### Identifying nodes that require training
+
+For nodes that requires training, it would be a child class of `MNTSFilterRequireTraining`. You can identify this by using `isinstance(node, MNTSFilterRequireTraining)`. 
+
+### Training example
+
+You can see [example 4](./examples/EG04_using_filters_that_require_train.py) for a more detailed implementation of how to build and train a normalization graph that requires training.
+
+```python
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
+from mnts.utils import repeat_zip
+
+G = MNTSFilterGraph("/path/to/graph")
+
+# * Prepare the upstream data for nodes that require training
+image_folder = Path("...")
+temp_output_folder = Path("...")
+images = [f for f in image_folder.iterdir() if f.name.find('nii') != -1]
+out_names = [f.name for f in images]
+
+# this prepares the data from nodes that does not require training and are upstream of node X
+z = ([X], out_names, [temp_output_folder], images)
+for args in repeat_zip(*z):
+    G.prepare_training_files(*args)
+
+# Train node number X
+G.train_node(X, temp_output_folder, temp_output_folder.joinpath("trained_states"))
+```
+
+### Inference Example
+
+```python
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
+from mnts.utils import repeat_zip
+
+G = MNTSFilterGraph("/path/to/graph")
+output_save_dir = Path(r'./example_data/output/EG_04')
+output_save_dir.mkdir(parents=True, exist_ok=True)
+
+G.load_node_states(2, temp_output_folder.joinpath("trained_states"))
+for im in images:
+    save_im = G.execute(im)
+    fname = output_save_dir.joinpath(im.name).resolve().__str__()
+    print(f"Saving to {fname}")
+    sitk.WriteImage(save_im[3], fname)
+
 ```
 
 ## Creating graph from yaml file
