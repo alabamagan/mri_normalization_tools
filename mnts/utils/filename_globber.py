@@ -1,7 +1,7 @@
 import pprint
 import re, os
 import pandas as pd
-from typing import Optional, AnyStr
+from typing import Optional, AnyStr, List, Union, Dict, Any
 from pathlib import Path
 from ..mnts_logger import MNTSLogger
 
@@ -9,19 +9,26 @@ __all__ = ['get_unique_IDs', 'get_fnames_by_globber', 'get_fnames_by_IDs', 'load
            'check_ID_duplicates']
 
 
-def get_unique_IDs(fnames, globber=None, return_dict=False):
+def get_unique_IDs(fnames: List[Union[Path,str]],
+                   globber: Optional[str]=None,
+                   return_dict: Optional[Dict]=False):
     iddict = {}
-    for f in fnames:
+    for fname in fnames:
         if globber is None:
             globber = "([0-9]{3,5})"
 
-        mo = re.search(globber, f)
+        if isinstance(fname, Path):
+            f = fname.name
+        else:
+            f = f
+
+        mo = re.search(globber, str(f))
         if not mo is None:
             id = mo.group()
             if id in iddict.keys():
-                iddict[id].append(f)
+                iddict[id].append(fname)
             else:
-                iddict[id] = [f]
+                iddict[id] = [fname]
 
     if not return_dict:
         idlist =list(iddict.keys())
@@ -30,13 +37,55 @@ def get_unique_IDs(fnames, globber=None, return_dict=False):
     else:
         return iddict
 
-def get_fnames_by_IDs(fnames,
-                      idlist,
-                      globber=None,
-                      return_dict=False):
+def get_fnames_by_IDs(fnames: List[Union[Path, str]],
+                      idlist: List[str],
+                      globber: Optional[str]=None,
+                      return_dict: Optional[bool]=False,
+                      raise_error: Optional[bool]=False) -> Union[Dict[str, Any], List[Any]]:
+    """Matches filenames with a list of IDs using a regex pattern.
+
+    Given a list of filenames and a list of IDs, this function uses a regular
+    expression pattern to extract unique IDs from the filenames. It then checks
+    for any missing IDs or duplicate filenames associated with the same ID.
+
+    Args:
+        fnames (List[Union[Path, str]]):
+            A list of filenames or Path objects to be matched with IDs.
+        idlist (List[str]):
+            A list of string IDs to be matched with the filenames.
+        globber (Optional[str]):
+            A regular expression pattern used to match and extract IDs from the filenames.
+            Defaults to "([0-9]{3,5})", which matches 3 to 5 consecutive digits.
+        return_dict (Optional[bool]):
+            If True, returns a dictionary mapping IDs to filenames. If False,
+            returns a list of filenames that match the IDs in `idlist`.
+            Defaults to False.
+        raise_error (Optional[bool]):
+            If True, raises a ValueError if any ID in `idlist` cannot be found
+            in `fnames`. If False, logs a warning. Defaults to False.
+
+    Returns:
+        Union[Dict[str, Any], List[Any]]:
+            If `return_dict` is True, returns a dict mapping IDs to the corresponding
+            filenames. If `return_dict` is False, returns a list of filenames that
+            correspond to the IDs in `idlist`.
+
+    Raises:
+        ValueError:
+            If `raise_error` is True and any ID in `idlist` cannot be found in `fnames`.
+
+    Examples:
+        >>> fnames = ['123_file.txt', '124_file.txt', '125_file.txt']
+        >>> idlist = ['123', '125']
+        >>> get_fnames_by_IDs(fnames, idlist)
+        >>> # ['123_file.txt', '125_file.txt']
+        >>> get_fnames_by_IDs(fnames, idlist, return_dict=True)
+        >>> # {'123': ['123_file.txt'], '125': ['125_file.txt']}
+
+
+    """
     _logger = MNTSLogger['algorithm.utils']
-    if globber is None:
-        globber = "([0-9]{3,5})"
+    globber = globber or "([0-9]{3,5})"
 
     outfnames = {}
     id_fn_pair = get_unique_IDs(fnames, globber, return_dict=True)
@@ -44,8 +93,12 @@ def get_fnames_by_IDs(fnames,
 
     id_not_in_fnames = set(idlist) - set(ids_in_fn)
     if len(id_not_in_fnames) > 0:
-        _logger.warning(f"Cannot find anything for the following ids:\n"
-                        f"{pprint.pformat(id_not_in_fnames)}")
+        msg = (f"Cannot find anything for the following ids:\n "
+               f"{pprint.pformat(id_not_in_fnames)}")
+        if not raise_error:
+            _logger.warning(msg)
+        else:
+            raise ValueError(msg)
     overlap = set(ids_in_fn) & set(idlist)
 
     # Check if there are repeated ids
@@ -73,37 +126,81 @@ def get_fnames_by_globber(fnames, globber):
     return copy
 
 
-def load_supervised_pair_by_IDs(source_dir, target_dir, idlist, globber=None, return_pairs=False):
-    source_list = get_fnames_by_globber(os.listdir(source_dir), globber) \
-        if not globber is None else os.listdir(source_dir)
+def load_supervised_pair_by_IDs(source_dir: Path,
+                                target_dir: Path,
+                                idlist: List[str],
+                                globber: Optional[str]=None,
+                                return_pairs: Optional[bool]=False):
+    """Loads and pairs supervised file names from source and target directories by IDs.
+
+    This function pairs file names from the given source and target directories,
+    matching them according to the provided list of IDs. It can optionally use
+    a globbing pattern to filter file names.
+
+    Args:
+        source_dir (Path):
+            The directory containing the source files.
+        target_dir (Path):
+            The directory containing the target files.
+        idlist (List[str]):
+            A list of IDs to match files to.
+        globber (Optional[str]):
+            A regex pattern to filter file names based on IDs. Defaults to None,
+            which means no filtering is applied.
+        return_pairs (Optional[bool]):
+            If True, returns a list of (source_file, target_file) pairs. If False,
+            returns two lists of file names from source and target respectively.
+            Defaults to False.
+
+    Returns:
+        Tuple[Any, Any]:
+            If `return_pairs` is True, returns a list of (source_file, target_file) pairs.
+            If `return_pairs` is False, returns two lists of file names from source and
+            target directories respectively.
+
+    Raises:
+        ValueError:
+            If there is a mismatch in the number of files after pairing.
+
+    .. note::
+        This function requires `get_fnames_by_IDs`, `get_fnames_by_globber`,
+        and `MNTSLogger` to be defined elsewhere in the codebase.
+    """
     _logger = MNTSLogger['algorithm.utils']
 
-    source_list = get_fnames_by_IDs(source_list, idlist, globber=globber, return_dict=True)
-    source_keys = source_list.keys()
-    source_list = [source_list[key][0] for key in source_list]
-    target_list = get_fnames_by_IDs(os.listdir(target_dir), idlist, globber=globber, return_dict=True)
-    target_keys = target_list.keys()
-    target_list = [target_list[key][0] for key in source_keys]
+    # List files in source and target directories
+    source_files = list(source_dir.iterdir())
+    target_files = list(target_dir.iterdir())
 
-    if len(source_list) != len(target_list):
+    # Match files by IDs
+    source_list = get_fnames_by_IDs(source_files, idlist, globber=globber, return_dict=True)
+    target_list = get_fnames_by_IDs(target_files, idlist, globber=globber, return_dict=True)
+
+    # Ensure matched files are present in both source and target
+    source_keys = set(source_list.keys())
+    target_keys = set(target_list.keys())
+    common_keys = source_keys & target_keys
+
+    if len(common_keys) != len(idlist):
         _logger.error("Dimension mismatch when pairing.")
-        missing = {'Src': [], 'Target': []}
-        for src in source_keys:
-            if src not in target_keys:
-                missing['Src'].append(src)
-        for tar in target_keys:
-            if tar not in source_keys:
-                missing['Target'].append(src)
+        missing = {'Src': list(source_keys - target_keys), 'Target': list(target_keys - source_keys)}
         _logger.debug(f"{missing}")
-        raise ValueError("Dimension mismatch! Src: %i vs Target: %i"%(len(source_list), len(target_list)))
+        raise ValueError(f"Dimension mismatch! Src: {len(source_keys)} vs Target: {len(target_keys)}")
 
-    pairs = list(zip(source_list, target_list))
-    pairs.sort()
+    # Pair files from source and target
+    paired_source_files = [source_list[key][0] for key in common_keys]
+    paired_target_files = [target_list[key][0] for key in common_keys]
+
+    # Sort pairs by IDs to ensure matching order
+    pairs = list(zip(paired_source_files, paired_target_files))
+    pairs.sort(key=lambda x: idlist.index(Path(x[0]).stem))
+
+    # Return pairs or separate lists
     if return_pairs:
         return pairs
     else:
         source_list, target_list = zip(*pairs)
-        return source_list, target_list
+        return list(source_list), list(target_list)
 
 def check_ID_duplicates(target_dir: Path,
                         globber: AnyStr = None) -> pd.DataFrame:
