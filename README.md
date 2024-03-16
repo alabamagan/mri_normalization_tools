@@ -100,7 +100,7 @@ if __name__ == '__main__':
         sitk.WriteImage(save_im[4], fname)  # RangeRescale output at node index 3
 ```
 
-## Using normalization graph
+## Using normalization graph API
 
 Some normalization method require training. For example, most piecewise linear intensity normalization algorithm requries establishing feature points on a graph prior to usage. This package offers API for training these nodes. 
 
