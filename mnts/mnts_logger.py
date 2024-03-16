@@ -37,7 +37,7 @@ class MNTSLogger(object):
     log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
-        if cls.global_logger is 'Init':
+        if cls.global_logger == 'Init':
             logger_name = 'global'
             cls.global_logger = None
             cls.global_logger = MNTSLogger(log_dir = log_dir,
@@ -259,7 +259,7 @@ class MNTSLogger(object):
 
     def __class_getitem__(cls, item):
         # If global logger haven't be created, casually use temp file to host the log
-        if cls.global_logger is 'Init' or None:
+        if cls.global_logger == 'Init' or cls.global_logger is None:
             cls.global_logger = MNTSLogger('./default.log', logger_name='default',
                                            verbose=True, keep_file=False)
             return MNTSLogger[item]
