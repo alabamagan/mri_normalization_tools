@@ -20,7 +20,7 @@ def get_unique_IDs(fnames: List[Union[Path,str]],
         if isinstance(fname, Path):
             f = fname.name
         else:
-            f = f
+            f = fname
 
         mo = re.search(globber, str(f))
         if not mo is None:
