@@ -188,12 +188,12 @@ def load_supervised_pair_by_IDs(source_dir: Path,
         raise ValueError(f"Dimension mismatch! Src: {len(source_keys)} vs Target: {len(target_keys)}")
 
     # Pair files from source and target
+    #! Note that if there are multiple matches for the same ID, only the first file path is returned.
     paired_source_files = [source_list[key][0] for key in common_keys]
     paired_target_files = [target_list[key][0] for key in common_keys]
 
     # Sort pairs by IDs to ensure matching order
     pairs = list(zip(paired_source_files, paired_target_files))
-    pairs.sort(key=lambda x: idlist.index(Path(x[0]).stem))
 
     # Return pairs or separate lists
     if return_pairs:
