@@ -130,7 +130,7 @@ def load_supervised_pair_by_IDs(source_dir: Path,
                                 target_dir: Path,
                                 idlist: List[str],
                                 globber: Optional[str]=None,
-                                return_pairs: Optional[bool]=False):
+                                return_pairs: Optional[bool]=False) -> Union[List[Path], Tuple[List[Path], List[Path]]]:
     """Loads and pairs supervised file names from source and target directories by IDs.
 
     This function pairs file names from the given source and target directories,
@@ -179,7 +179,8 @@ def load_supervised_pair_by_IDs(source_dir: Path,
     # Ensure matched files are present in both source and target
     source_keys = set(source_list.keys())
     target_keys = set(target_list.keys())
-    common_keys = source_keys & target_keys
+    common_keys = list(source_keys & target_keys)
+    common_keys.sort()
 
     if len(common_keys) != len(idlist):
         _logger.error("Dimension mismatch when pairing.")
