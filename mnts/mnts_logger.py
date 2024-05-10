@@ -110,7 +110,7 @@ class MNTSLogger(object):
 
         formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
-        if keep_file:
+        if self._keep_file:
             handler = logging.StreamHandler(self._log_file)
             handler.setFormatter(formatter)
             self._file_handler = handler
@@ -133,8 +133,10 @@ class MNTSLogger(object):
 
     def set_up_log_file(self):
         if MNTSLogger.global_logger is not None:
+            # Update local attributes with global logger's attribute
             self._log_file = MNTSLogger.global_logger._log_file
             self._log_dir = MNTSLogger.global_logger._log_dir
+            self._keep_file = MNTSLogger.global_logger._keep_file
         elif self._keep_file:
             self._log_file = open(self._log_dir, 'a')
             self._log_dir = self._log_file.name
