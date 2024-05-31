@@ -51,6 +51,8 @@ class Dcm2NiiConverter:
             Flag indicating whether to use patient ID in the file name.
         use_top_level_fname (bool, optional):
             Flag indicating whether to use top level file name.
+        add_scan_time (bool, optional):
+            Flag indicating whether scan-time should be prefixed.
         root_dir (str or Path):
             Root path that is referenced if `use_top_level_fname` is specified.
         idlist (list or tuple, optional):
@@ -85,6 +87,7 @@ class Dcm2NiiConverter:
                  check_im_type      : Optional[bool]                = False,
                  use_patient_id     : Optional[bool]                = False,
                  use_top_level_fname: Optional[bool]                = False,
+                 add_scan_time      : Optional[bool]                = False,
                  root_dir           : Union[str, Path]              = None,
                  idlist             : Optional[Union[List, Tuple]]  = None,
                  prefix             : Optional[str]                 = "",
@@ -98,6 +101,7 @@ class Dcm2NiiConverter:
         self.check_im_type = check_im_type
         self.use_patient_id = use_patient_id
         self.use_top_level_fname = use_top_level_fname
+        self.add_scan_time = add_scan_time
         self.root_dir = root_dir
         self.idlist = idlist
         self.prefix = prefix
@@ -188,7 +192,8 @@ class Dcm2NiiConverter:
         tags = {
             '0010|0020': None, # PID
             '0008|103e': None, # Study description, usually they put protocol name here
-            '0020|0011': None, # Series Number
+            '0020|0011': None, # Series Number,
+            '0008|0020': None, # Scan time
         }
         for dctag in tags:
             try:
@@ -214,6 +219,8 @@ class Dcm2NiiConverter:
         # Add prefix
         if len(self.prefix) > 0:
             final_prefix = self.prefix + final_prefix
+        if self.add_scan_time:
+            final_prefix = final_prefix + '_' + tags['0008|0020']
 
         # Add this to path for clarity
         description = re.sub(' +', '_', tags['0008|103e'])
@@ -431,6 +438,7 @@ def dicom2nii(folder: str,
               check_im_type = False,
               use_patient_id: bool = False,
               use_top_level_fname: bool = False,
+              add_scan_time: bool = False,
               root_dir = None,
               idlist = None,
               prefix = "",
@@ -455,6 +463,7 @@ def dicom2nii(folder: str,
                                      check_im_type,
                                      use_patient_id,
                                      use_top_level_fname,
+                                     add_scan_time,
                                      root_dir,
                                      idlist,
                                      prefix,

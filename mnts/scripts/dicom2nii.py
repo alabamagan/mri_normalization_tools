@@ -33,6 +33,7 @@ def dicom2nii(a, logger):
                     check_im_type = a.check_image_type_tag,
                     use_patient_id = a.usepid,
                     use_top_level_fname = a.usefname,
+                    add_scan_time = a.addtime,
                     root_dir = a.input,
                     idlist = ids,
                     prefix = a.prefix,
@@ -67,6 +68,9 @@ def console_entry(raw_args=None):
                         help='Use top level file name immediately after the input directory as ID.')
     parser.add_argument('--use-patient-id', action='store_true', dest='usepid',
                         help='Use patient id as file id.')
+    parser.add_argument('--add-scan-time', action='store_true', dest='addtime',
+                        help='Specify this to include timestamp to filename. Useful when same patient has '
+                             'multiple scans with the same protocol.')
     parser.add_argument('--log', action='store_true', dest='log',
                         help='Keep log file under ./dicom2nii.log')
     parser.add_argument('--verbose', action='store_true',
