@@ -5,6 +5,9 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False) -> str:
     identities. Typically, the description tag is the tag (0008|103e) for MRI scans. The description is
     processed with `re` to find what is the sequence identity. Definitions below
 
+    .. warning::
+        This function is for MRI only.
+
     .. notes::
         Contrast Mechanism:
             T1W    : T1-weighted image
