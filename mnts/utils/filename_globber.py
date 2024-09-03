@@ -195,7 +195,7 @@ def load_supervised_pair_by_IDs(source_dir: Path,
 
     # Sort pairs by IDs to ensure matching order
     pairs = list(zip(paired_source_files, paired_target_files))
-    pairs.sort(key=lambda x: idlist.index(re.search(globber, Path(x[0]).stem).group()))
+    pairs.sort(key=lambda x: list(idlist).index(re.search(globber, Path(x[0]).stem).group()))
 
     # Return pairs or separate lists
     if return_pairs:
