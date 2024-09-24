@@ -1,6 +1,6 @@
 import re
 
-def unify_mri_sequence_name(m: str, glob_techniques: bool = False) -> str:
+def unify_mri_sequence_name(m: str, glob_techniques: bool = False, return_glob_dict: bool = False) -> str:
     r"""This function normalize the sequence name from the description tag to a standard system of squence
     identities. Typically, the description tag is the tag (0008|103e) for MRI scans. The description is
     processed with `re` to find what is the sequence identity. Definitions below
@@ -39,8 +39,12 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False) -> str:
             SSFP: Steady-state free precession
 
     Args:
-        m (str): Input string from DICOM image description (0008|103e).
-        glob_techniques (str, optional): If checked, this will also include the technique use in the name.
+        m (str):
+            Input string from DICOM image description (0008|103e).
+        glob_techniques (str, optional):
+            If checked, this will also include the technique use in the name.
+        return_glob_dict (bool, optional):
+            If checked, this will also include the glob dictionary used to process the name.
 
     Returns:
         str: Unified sequence name
@@ -126,7 +130,15 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False) -> str:
                f"{w}" + \
                ("-FS" if fs else '') + \
                (f"_{p}" if not p is None else '')
-    return new_name
+
+    if return_glob_dict:
+        return new_name, {'weight': w,
+                          'plane': p,
+                          'contrast': c,
+                          'fat-suppression': fs,
+                          'technique': ','.join(t)}
+    else:
+        return new_name
 
 
 def filter_modality(m: str) -> str:
