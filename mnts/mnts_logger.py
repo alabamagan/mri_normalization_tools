@@ -91,7 +91,7 @@ class MNTSLogger(object):
         self._warning_hash = {}
         self._keep_file    = keep_file
         self._logger_name  = logger_name
-        self._log_level    = log_level
+        self._log_level    = str(log_level).lower()
 
 
         assert log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
