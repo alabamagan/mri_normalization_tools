@@ -354,6 +354,30 @@ class MNTSFilterGraph(object):
 
         Returns:
             None
+
+        Example:
+        >>> from pathlib import Path
+        >>> # Assume MNTSFilterGraph is properly imported and initialized
+        >>> filter_graph = MNTSFilterGraph()
+        >>>
+        >>> # Example output prefixes and directories
+        >>> output_prefixes = ["output_1", "output_2"]
+        >>> output_directories = [
+        >>>     Path("output_directory_exitnode_1"),
+        >>>     Path("output_directory_exitnode_2"),
+        >>> ]
+        >>>
+        >>> # Example inputs for the entrance nodes
+        >>> input_data_1 = ...  # some input data
+        >>> input_data_2 = ...  # some other input data
+        >>>
+        >>> # Execute the function
+        >>> filter_graph.mpi_execute(
+        >>>     output_prefix=output_prefixes,
+        >>>     output_directory=output_directories,
+        >>>     input_data_1,
+        >>>     input_data_2
+        >>> )
         """
         #!! Might get some memory issue here, but should be managible.
         # Create a copy of this class to separate
@@ -582,7 +606,24 @@ class MNTSFilterGraph(object):
 
     def load_node_states(self,
                          nodelist: List[Union[int, MNTSFilter]],
-                         save_dir: Union[str, Path]):
+                         save_dir: Union[str, Path]) -> None:
+        """Loads the saved states for specified nodes.
+
+        This method loads the trained states for nodes specified in the `nodelist`
+        from the given directory or file path.
+
+        Args:
+            nodelist (List[Union[int, MNTSFilter]]):
+                A list of nodes for which the states need to be loaded. If `None`,
+                it defaults to all nodes that require training.
+            save_dir (Union[str, Path]):
+                The path to the directory or file containing the saved states.
+
+        Raises:
+            IOError: If the specified `save_dir` does not exist.
+            ArithmeticError: If a specified node is not trainable.
+
+        """
         save_dir = Path(save_dir)
         if not save_dir.exists() :
             raise IOError(f"Cannot open directory/file to load the states, got {save_dir}")
