@@ -61,6 +61,13 @@ class MNTSFilterGraph(object):
     def edges(self):
         return self._graph.edges
 
+    @property
+    def requires_training(self):
+        if not len(self._nodemap):
+            self._logger.warning("Trying to access `requires_training` before initializing the model!")
+            return None
+        return any(isinstance(f, MNTSFilterRequireTraining) for f in self)
+
     @staticmethod
     def CreateGraphFromYAML(yaml_file: Union[Path, str]):
         r"""

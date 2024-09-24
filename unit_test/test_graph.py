@@ -59,6 +59,22 @@ class TestGraph(unittest.TestCase):
         print(G)
         Path('_test_graph.yaml').unlink()
 
+    def test_properties(self):
+        # Nyul requires training
+        graph_1 = create_graph()
+        self.assertTrue(graph_1.requires_training)
+
+        # Null graph should return None and warning message
+        graph_2 = MNTSFilterGraph()
+        self.assertIsNone(graph_2.requires_training)
+
+        # This graph does not require training
+        graph_3 = MNTSFilterGraph()
+        graph_3.add_node(DataNode())
+        graph_3.add_node(SpatialNorm(out_spacing=[0.4492, 0.4492, 4]), 0)
+        graph_3.add_node(HuangThresholding(closing_kernel_size=10), 1, is_exit=True)
+        self.assertFalse(graph_3.requires_training)
+
     def test_running_graph(self):
         pass
 
