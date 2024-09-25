@@ -94,7 +94,7 @@ class MNTSLogger(object):
         self._log_level    = str(log_level).lower()
 
 
-        assert log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
+        assert self._log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
             list(self.log_levels.keys()), log_level
         )
 

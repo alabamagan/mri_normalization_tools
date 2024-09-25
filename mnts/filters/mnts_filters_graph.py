@@ -102,12 +102,14 @@ class MNTSFilterGraph(object):
             # Get and parse the attributes
 
             _content = data_loaded.get(key, None)
+            _logger.debug(f"YAML content {_content = }")
             if _content is None:
                 steps.append(_filter_class())
             else:
                 # For list, there could be both args and kwargs.
                 if isinstance(_content, list):
                     _ext_kwargs = _content.pop('_ext', {})
+                    _logger.debug(f"{_ext_kwargs = }")
                     _args = [i for i in _content if not isinstance(i, dict)]
                     _kwargs = [i for i in _content if isinstance(i, dict)]
                     _kwargs = {} if len(_kwargs) == 0 else _kwargs[0]
@@ -116,8 +118,14 @@ class MNTSFilterGraph(object):
                 # If its just a dict, its kwargs
                 elif isinstance(_content, dict):
                     _ext_kwargs = _content.pop('_ext', {})
+                    _logger.debug(f"{_ext_kwargs = }")
                     _filter = _filter_class(**_content)
                     graph.add_node(_filter, **_ext_kwargs)
+
+        # check if result has exit
+        if len(graph._exits) == 0:
+            msg = "Your graph has no exit node and will do nothing."
+            raise ArithmeticError(msg)
         return graph
 
 
@@ -173,14 +181,22 @@ class MNTSFilterGraph(object):
 
         """
         assert isinstance(node, MNTSFilter), f"Wrong input type: {node}"
+        self._logger.info(f"Adding node {node} to the filter graph.")
+        self._logger.debug(f"Args: {node = }, {upstream = }, {is_exit = }")
+        self._logger.debug(f"ArgsTypes: {type(node) = }, {type(upstream) = }, {type(is_exit) = }")
 
+        # if there's no other node with a filter key associates with this current node (i.e., this node has been added
+        # before), add this node to the graph as a new one.
         if self._node_search('filter', node) == -1:
             _node_index = self._graph.number_of_nodes()
             self._graph.add_node(_node_index, filter=node)
             self._nodemap[_node_index] = node.get_name()
             if is_exit:
+                self._logger.debug(f"Node: {node} added as exits")
                 self._exits.append(_node_index)
+                self._logger.debug(f"{self._exits = }")
         else:
+            # Otherwise, just add the node index because the node is already here
             _node_index = self._node_search('filter', node)[0]
 
         if upstream is None:
