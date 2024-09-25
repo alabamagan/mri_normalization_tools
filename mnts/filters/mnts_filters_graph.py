@@ -1,15 +1,18 @@
 import copy
 import operator
 import pprint
+from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Union
+from threading import Lock
 
 import SimpleITK as sitk
 import networkx as nx
 import numpy as np
 import yaml
 from cachetools import LRUCache, cachedmethod
+from functools import wraps
 
 from ..mnts_logger import MNTSLogger
 
@@ -23,6 +26,19 @@ _avail_filters.extend(dir(geom))
 _avail_filters.extend(dir(intensity))
 
 __all__ = ['MNTSFilterGraph']
+
+def _update_progress(func):
+    """Decorator to update progress bar after function call."""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        result = func(self, *args, **kwargs)
+        with self._thread_lock:
+            if self.progress_bar is not None:
+                self.progress_bar.update(1)
+        return result
+
+    return wrapper
+
 
 class MNTSFilterGraph(object):
     r"""
@@ -38,6 +54,7 @@ class MNTSFilterGraph(object):
         self._output = {}
         self._nodes_upstream = {}
         self._nodes_cache = LRUCache(maxsize=8)
+        self._thread_lock = Lock()
 
     @property
     def nodes(self):
@@ -332,6 +349,13 @@ class MNTSFilterGraph(object):
         # Clear cache
         return self._output
 
+
+    def close_progress_bar(self):
+        """Closes the tqdm progress bar."""
+        if self.progress_bar is not None:
+            self.progress_bar.close()
+
+    @_update_progress
     def mpi_execute(self,
                     output_prefix: Iterable[str],
                     output_directory: Union[str, Path, List[Union[str, Path]], Dict],
@@ -389,8 +413,8 @@ class MNTSFilterGraph(object):
         >>>
         >>> # Execute the function
         >>> filter_graph.mpi_execute(
-        >>>     output_prefix=output_prefixes,
-        >>>     output_directory=output_directories,
+        >>>     output_prefixes,
+        >>>     output_directories,
         >>>     input_data_1,
         >>>     input_data_2
         >>> )
@@ -445,6 +469,10 @@ class MNTSFilterGraph(object):
             cls_obj._logger.info(f"Writing to output {out_im_name}")
             sitk.WriteImage(out_im, str(out_im_name))
         return 0
+
+    def set_progress_bar(self, total_tasks):
+        """Sets the progress bar for the graph."""
+        self.progress_bar = tqdm(total=total_tasks, desc="Processing", unit="task")
 
     def check_output(self, output_directory, output_prefix):
         r"""
