@@ -10,8 +10,8 @@ class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_default_arguments(self):
         logger = MNTSLogger()
         self.assertTrue(logger._verbose)
-        self.assertEqual(logger._log_level, 'info')
-        self.assertEqual(logger._keep_file, False)
+        self.assertEqual('info', logger._log_level)
+        self.assertEqual(False, logger._keep_file)
 
     #  Tests that a logger can be created with custom arguments. Tags: [happy path]
     def test_creating_logger_with_custom_arguments(self):
