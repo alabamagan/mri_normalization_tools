@@ -6,7 +6,10 @@ import tempfile
 import atexit
 from pathlib import Path
 from tqdm import *
+from rich.logging import RichHandler
+from rich.console import Console
 import time
+import shutil
 
 global TORCH_EXIST
 try:
@@ -18,6 +21,34 @@ except ModuleNotFoundError:
 __all__ = ['MNTSLogger', 'LogExceptions']
 
 class MNTSLogger(object):
+    r"""Logger class that manages multiple logging instances.
+
+    This class handles the creation and management of loggers with various
+    configurations, such as log directory, log levels, and verbosity. It also
+    hooks into the system's exception handling to log uncaught exceptions.
+
+    Args:
+        log_dir (str    , optional): The directory or file path for logging output. Defaults to 'default.log'.
+        logger_name (str, optional): The name of the logger. Defaults to the module name.
+        verbose (bool   , optional): Indicates if verbose logging is enabled. Defaults to True.
+        log_level (str  , optional): The logging level to set. Defaults to class-level log_level.
+        keep_file (bool , optional): If True
+
+    Attributes:
+        CRITICAL (int)                    : Logging level for critical messages.
+        DEBUG (int)                       : Logging level for debug messages.
+        ERROR (int)                       : Logging level for error messages.
+        FATAL (int)                       : Logging level for fatal messages.
+        INFO (int)                        : Logging level for informational messages.
+        WARNING (int)                     : Logging level for warning messages.
+        all_loggers (dict)                : A dictionary storing all created loggers by name.
+        global_logger (MNTSLogger or str) : The singleton global logger or 'Init' if not yet created.
+        is_verbose (bool)                 : Indicates if verbose logging is enabled.
+        log_format (str)                  : Format string for log messages.
+        log_level (str)                   : Default logging level obtained from environment variable or set to 'info'.
+        log_levels (dict)                 : A mapping of log level names to logging module constants.
+
+    """
     global_logger = 'Init'
     all_loggers   = {}
     log_levels={
@@ -35,8 +66,29 @@ class MNTSLogger(object):
     is_verbose    = False
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
     log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
+    log_format_rich = "(%(name)s) %(message)s"
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
+        r"""Creates or retrieves a logger instance.
+
+        Initializes and returns a logger instance, creating a global logger
+        if none exists. Hooks the exception handler to the global logger.
+
+        ..notes::
+            The first instantiated logger becomes the global logger. If a logger
+            with the same name exists, it will be reused instead of creating a new one.
+
+        Args:
+            log_dir (str    , optional): The directory or file path for logging output. Defaults to 'default.log'.
+            logger_name (str, optional): The name of the logger. Defaults to the module name.
+            verbose (bool   , optional): Indicates if verbose logging is enabled. Defaults to True.
+            log_level (str  , optional): The logging level to set. Defaults to class-level log_level.
+            keep_file (bool , optional): If True, retains the log file on new logger creation. Defaults to False.
+
+        Returns:
+            MNTSLogger: An instance of MNTSLogger configured with the specified parameters.
+
+        """
         if cls.global_logger == 'Init':
             logger_name = 'global'
             cls.global_logger = None
@@ -62,10 +114,12 @@ class MNTSLogger(object):
         logger named 'str'.
 
         Args:
-            log_dir (str):
-                Filename of the log file.
-            verbose (boolean, Optional):
-                If True, messages will be printed to stdout alongside being logged. Default to False.
+            log_dir (str    , optional): The directory or file path for logging output. Defaults to 'default.log'.
+            logger_name (str, optional): The name of the logger. Defaults to the module name.
+            verbose (bool   , optional): Indicates if verbose logging is enabled. Defaults to True.
+            log_level (str  , optional): The logging level to set. Defaults to class-level log_level.
+            keep_file (bool , optional): If True, retains the log file on new logger creation. Defaults to False.
+
 
         Returns:
             :class:`Logger` object
@@ -111,27 +165,49 @@ class MNTSLogger(object):
         formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
         if self._keep_file:
-            handler = logging.StreamHandler(self._log_file)
-            handler.setFormatter(formatter)
-            self._file_handler = handler
-            self._logger.addHandler(self._file_handler)
-
+            console = Console(color_system='truecolor', soft_wrap=True,
+                              width=max(shutil.get_terminal_size().columns, 160),
+                              file=self._log_file)
+            rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
+                                       show_level=True, markup=True, tracebacks_show_locals=True,
+                                       log_time_format = "[%Y-%m-%d %H:%M:%S]"
+                                       )
+            rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
+            rich_handler.setFormatter(rich_formatter)
+            self._logger.addHandler(rich_handler)
 
         # create a new logger if requested logger was not already created
         if not logger_name in MNTSLogger.all_loggers:
-            self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
-            self._stream_handler.setFormatter(formatter)
-            self._logger.addHandler(self._stream_handler)
+            # OLD
+            # self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
+            # self._stream_handler.setFormatter(formatter)
+
+            # Make sure the rich handler is using the correct output width
+            console = Console(color_system='truecolor', soft_wrap=True,
+                              width=max(shutil.get_terminal_size().columns, 160),
+                              stderr=True)
+            rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
+                                       show_level=True, markup=True, tracebacks_show_locals=True,
+                                       log_time_format = "[%Y-%m-%d %H:%M:%S]-R"
+                                       )
+            rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
+            rich_handler.setFormatter(rich_formatter)
+            self._stream_handler = rich_handler
+            self._logger.addHandler(rich_handler)
             self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
                                                                 MNTSLogger.global_logger._logger.level)
             # put this in all_logger
             MNTSLogger.all_loggers[logger_name] = self
-            self.info(f"Loging to {self._log_dir} with log level: {self._logger.level}")
+            if self._log_file is not None:
+                self.info(f"Loging to {self._log_dir} with log level: {self._logger.level}")
+            else:
+                self.info(f"Loging to STDERR with log level: {self._logger.level}")
         else:
             msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
             raise ArithmeticError(msg)
 
     def set_up_log_file(self):
+        r"""Changes the self._log_dir according to options"""
         if MNTSLogger.global_logger is not None:
             # Update local attributes with global logger's attribute
             self._log_file = MNTSLogger.global_logger._log_file
@@ -169,8 +245,7 @@ class MNTSLogger(object):
 
         # Remove all handler from loggers
         try:
-            self._logger.removeHandler(self._file_handler)
-            self._logger.removeHandler(self._stream_handler)
+            self._logger.handlers.clear()
         except:
             pass
 
@@ -408,6 +483,5 @@ class LevelFormatter(logging.Formatter):
             return self._level_formatters[record.levelno].format(record)
 
         return super(LevelFormatter, self).format(record)
-
 
 atexit.register(MNTSLogger.cleanup)

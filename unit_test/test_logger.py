@@ -4,6 +4,7 @@ import logging
 import pytest
 from pathlib import Path
 import os
+import sys
 
 
 class Test_MNTSLogger(unittest.TestCase):
@@ -46,4 +47,31 @@ class Test_MNTSLogger(unittest.TestCase):
         r"""Test that when keep_file option is set to False or is default, the log_file attribute is created by
         tempfile."""
         with MNTSLogger(verbose=True, keep_file=False) as logger:
+            logger.info("Logger ready")
+            self.assertIsNone(logger._log_file)
+
+    def test_keep_log_file(self):
+        with MNTSLogger(verbose=True, keep_file=True) as logger:
+            logger.info("Logger keep_file ready")
             self.assertIsNotNone(logger._log_file)
+            p = Path(logger._log_dir)
+
+            # See how error is logged
+            try:
+                10 / 0
+            except Exception as e:
+                logger.exception(e)
+        self.assertTrue(p.exists())
+        p.unlink()
+
+    def test_rich_traceback(self):
+        logger = MNTSLogger(verbose=True, log_level='DEBUG')
+
+        def not_good(x):
+            x *= 10
+            return x / 0
+
+        try:
+            not_good(20)
+        except Exception as e:
+            logger.exception(e)
