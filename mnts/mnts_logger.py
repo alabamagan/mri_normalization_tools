@@ -170,7 +170,7 @@ class MNTSLogger(object):
                               file=self._log_file)
             rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
                                        show_level=True, markup=True, tracebacks_show_locals=True,
-                                       log_time_format = "[%Y-%m-%d %H:%M:%S]"
+                                       log_time_format = "[%Y-%m-%d %H:%M:%S]", omit_repeated_times=False
                                        )
             rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
             rich_handler.setFormatter(rich_formatter)
