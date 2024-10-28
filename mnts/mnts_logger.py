@@ -193,8 +193,7 @@ class MNTSLogger(object):
             rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
             rich_handler.setFormatter(rich_formatter)
             self._stream_handler = rich_handler
-            if self._verbose:
-                self._logger.addHandler(rich_handler)
+            self._logger.addHandler(rich_handler)
             self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
                                                                 MNTSLogger.global_logger._logger.level)
             # put this in all_logger
@@ -284,16 +283,7 @@ class MNTSLogger(object):
         return cls.is_verbose
 
     def set_verbose(self, b):
-        if not self._stream_handler is None:
-            try:
-                if not b:
-                    self._logger.removeHandler(self._stream_handler)
-                    self._stream_handler.verbose = b
-                else:
-                    self._logger.addHandler(self._stream_handler)
-                    self._stream_handler.verbose = b
-            except:
-                pass
+        self._stream_handler.verbose=b
         self._verbose=b
 
     def log_traceback(self):
