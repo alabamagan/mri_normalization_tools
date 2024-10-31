@@ -55,6 +55,8 @@ class MNTSFilterGraph(object):
         self._nodes_upstream = {}
         self._nodes_cache = LRUCache(maxsize=8)
         self._thread_lock = Lock()
+        # This will be set if multi-thread is used
+        self.progress_bar = None
 
     @property
     def nodes(self):
