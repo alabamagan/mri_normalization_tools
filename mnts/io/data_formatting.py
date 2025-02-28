@@ -527,7 +527,7 @@ def pydicom_read_series(dcmdir: Path, progress_bar: bool = False) -> Dict[str, L
     Raises:
       FileNotFoundError: If no DICOM files are found in the provided directory.
 
-    .. notes::
+    .. note::
         The DICOM files are identified by attempting to read them using pydicom and
         checking for a valid SOP Instance UID. Files that cannot be read or do not
         contain a valid UID are silently ignored unless they cause the list to be empty,

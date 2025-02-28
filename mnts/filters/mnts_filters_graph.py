@@ -440,7 +440,7 @@ class MNTSFilterGraph(object):
                         output_directory = {v: _od.joinpath(self.nodes[v]['filter'].get_name()) for v in self._exits}
                     else:
                         raise IndexError("The lenth of output directories specified do not match the number of "
-                                         "exit nodes.")
+                                         f"exit nodes: {output_directory = }")
                 else:
                     output_directory = {v: output_directory[n] for n, v in enumerate(self._exits)}
             elif isinstance(output_directory, dict):

@@ -4,8 +4,11 @@ import os, sys, traceback
 import hashlib
 import tempfile
 import atexit
+from typing import Any, Optional, Tuple, Iterable
 from pathlib import Path
 from tqdm import *
+from rich.text import Text
+from rich._inspect import Inspect
 from rich.logging import RichHandler
 from rich.console import Console
 import time
@@ -67,6 +70,7 @@ class MNTSLogger(object):
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
     log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
     log_format_rich = "(%(name)s) %(message)s"
+    use_rich: bool = True
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
         r"""Creates or retrieves a logger instance.
@@ -168,13 +172,18 @@ class MNTSLogger(object):
             console = Console(color_system='truecolor', soft_wrap=True,
                               width=max(shutil.get_terminal_size().columns, 160),
                               file=self._log_file)
-            rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
-                                       show_level=True, markup=False, tracebacks_show_locals=True,
-                                       log_time_format = "[%Y-%m-%d %H:%M:%S]", omit_repeated_times=False
-                                       )
-            rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
-            rich_handler.setFormatter(rich_formatter)
-            self._logger.addHandler(rich_handler)
+            if self.use_rich:
+                rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
+                                           show_level=True, markup=False, tracebacks_show_locals=True,
+                                           log_time_format = "[%Y-%m-%d %H:%M:%S]", omit_repeated_times=False
+                                           )
+                rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
+                rich_handler.setFormatter(rich_formatter)
+                self._logger.addHandler(rich_handler)
+            else:
+                handler = logging.FileHandler(self._log_file)
+                handler.setFormatter(formatter)
+                self._logger.addHandler()
 
         # create a new logger if requested logger was not already created
         if not logger_name in MNTSLogger.all_loggers:
@@ -182,19 +191,24 @@ class MNTSLogger(object):
             # self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
             # self._stream_handler.setFormatter(formatter)
 
-            # Make sure the rich handler is using the correct output width
-            console = Console(color_system='truecolor', soft_wrap=True,
-                              width=max(shutil.get_terminal_size().columns, 160),
-                              stderr=True)
-            rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
-                                       show_level=True, markup=False, tracebacks_show_locals=True,
-                                       log_time_format="[%Y-%m-%d %H:%M:%S]-R", locals_max_length=10,
-                                       locals_max_string=80
-                                       )
-            rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
-            rich_handler.setFormatter(rich_formatter)
-            self._stream_handler = rich_handler
-            self._logger.addHandler(rich_handler)
+            if self.use_rich:
+                # Make sure the rich handler is using the correct output width
+                console = Console(color_system='truecolor', soft_wrap=True,
+                                  width=max(shutil.get_terminal_size().columns, 160),
+                                  stderr=True)
+                rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
+                                           show_level=True, markup=False, tracebacks_show_locals=True,
+                                           log_time_format="[%Y-%m-%d %H:%M:%S]-R", locals_max_length=10,
+                                           locals_max_string=80
+                                           )
+                rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
+                rich_handler.setFormatter(rich_formatter)
+                self._stream_handler = rich_handler
+                self._logger.addHandler(rich_handler)
+            else:
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                self._logger.addHandler(stream_handler)
             self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
                                                                 MNTSLogger.global_logger._logger.level)
             # put this in all_logger
@@ -397,6 +411,28 @@ class MNTSLogger(object):
         del cls.global_logger, cls.all_loggers
         cls.global_logger = None
         cls.all_loggers = {}
+
+    def inspect(self, obj: Any, *args, **kwargs):
+        r"""If a rich handler is used for logging, this inspect function will write the inspect result to the log file
+        and/or console output.
+        """
+        default_kwargs = {
+            'private': False,
+            'title': "Inspection",
+            'all': False
+        }
+        default_kwargs.update(kwargs)
+
+        # Get the rich handler from self._logger
+        rich_handler = next((h for h in self._logger.handlers if isinstance(h, RichHandler)), None)
+
+        if rich_handler:
+            # Use the rich console to print the inspected object
+            console = rich_handler.console
+            console.print(Inspect(obj, *args, **default_kwargs))  # Print the object using the rich console
+        else:
+            # Fallback to default logging if no rich handler is found
+            self.warning(f"Try to inspect object but no RichHanlder is found.", no_repeat=True)
 
     def _del(self):
         try:

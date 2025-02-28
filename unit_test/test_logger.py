@@ -57,10 +57,12 @@ class Test_MNTSLogger(unittest.TestCase):
             p = Path(logger._log_dir)
 
             # See how error is logged
-            try:
-                10 / 0
-            except Exception as e:
-                logger.exception(e)
+            with self.assertRaises(ZeroDivisionError):
+                try:
+                    10 / 0
+                except Exception as e:
+                    logger.exception(e)
+                    raise e
         self.assertTrue(p.exists())
         p.unlink()
 
@@ -75,3 +77,9 @@ class Test_MNTSLogger(unittest.TestCase):
             not_good(20)
         except Exception as e:
             logger.exception(e)
+
+    def test_rich_inspect(self):
+        logger = MNTSLogger(verbose=True, log_level='DEBUG')
+
+        obj = ("Abc", "DFE", [1, 2, 3])
+        logger.inspect(obj)

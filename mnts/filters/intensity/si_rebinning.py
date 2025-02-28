@@ -30,7 +30,8 @@ class SignalIntensityRebinning(MNTSIntensityBase, MNTSFilter):
         super(SignalIntensityRebinning, self).__init__()
         self._rrescale = RangeRescale()
         self.num_of_bins = num_of_bins
-        self.quantiles = quantiles
+        self._quantiles = quantiles
+        self._skip_rescale = False
 
     @property
     def num_of_bins(self):
@@ -51,10 +52,6 @@ class SignalIntensityRebinning(MNTSIntensityBase, MNTSFilter):
         self._num_of_bins = int(val)
         self._rrescale.min = 0
         self._rrescale.max = self._num_of_bins - 1
-
-    @property
-    def skip_rescale(self):
-        return self._skip_rescale
 
     def _filter(self,
                 input: Union[str, Path, sitk.Image],

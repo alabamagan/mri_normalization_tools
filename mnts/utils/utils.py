@@ -5,6 +5,7 @@ import warnings
 from shutil import *
 from pprint import pformat, pprint
 from ..mnts_logger import MNTSLogger
+from .sequence_check import unify_mri_sequence_name
 from typing import *
 
 __all__ = ['repeat_zip']
@@ -41,8 +42,9 @@ def repeat_zip(*args):
                 return
         yield tuple(values)
 
-
-def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
+def organize_directory(d: Union[Path, str],
+                       target_dir: Optional[Union[Path, str]] = None,
+                       regpat: Optional[str] = None, warn_duplicate: bool = False):
     r"""Organizes a directory of NIfTI image files into subdirectories.
 
     This function takes a directory path as input and organizes NIfTI image
@@ -57,6 +59,8 @@ def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
         d (Union[Path, str]):
             The directory path where the NIfTI image files
             are located. It can be a `Path` object or a string path.
+        target_dir:
+        regpat:
         warn_duplicate (bool, Optional):
             If True, issues a warning when
             duplicate image files for the same patient ID and modality are
@@ -94,7 +98,8 @@ def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
     if not d.is_dir():
         raise FileNotFoundError(f"Cannot found directory: {str(p.absolute())}")
 
-    repat = r"(?P<PatientID>[\w\d]+)-(?P<Modality>[-\w\+\.\(\)]+)\+(?P<SequenceID>\d+).*"
+    repat = regpat or r"(?P<PatientID>[\w\d]+)-(?P<Modality>[-\w\+\.\(\)]+)\+(?P<SequenceID>\d+).*"
+    target_dir = target_dir or d
 
     forganize_dir = d
 
@@ -103,16 +108,19 @@ def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
     for _nii_file in forganize_dir.rglob("*nii.gz"):
         _fname = _nii_file.name
         mo = re.search(repat, _fname)
-        groupdict = mo.groupdict()
-        groupdict['fname'] = _fname
-        groupdict['file_dir'] = _nii_file
-        rows.append(pd.Series(groupdict))
+        if not mo is None:
+            groupdict = mo.groupdict()
+            groupdict['fname'] = _fname
+            groupdict['file_dir'] = _nii_file
+            rows.append(pd.Series(groupdict))
+        else:
+            warnings.warn(f"Cannot process: {_fname}")
     df = pd.concat(rows, axis=1).T
     df.set_index('fname', inplace=True, drop=True)
 
     # Map sequence name to unified modality name
     mapping = {}
-    df['Unified Modality'] = df['Modality'].apply(unify_modality_name)
+    df['Unified Modality'] = df['Modality'].apply(unify_mri_sequence_name)
 
     # Sanity check if there's image of same patient having same unified modliaty name
     if warn_duplicate:
@@ -138,3 +146,4 @@ def organize_directory(d: Union[Path, str], warn_duplicate: bool = False):
                 move(str(src_dir), mov_to)
             except Exception as e:
                 warnings.warn(f"Error when trying to move: {name}; {e}")
+    return df
