@@ -9,6 +9,7 @@ import sys
 
 class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_default_arguments(self):
+        MNTSLogger.cleanup()
         logger = MNTSLogger()
         self.assertTrue(logger._verbose)
         self.assertEqual('info', logger._log_level)
@@ -16,6 +17,7 @@ class Test_MNTSLogger(unittest.TestCase):
 
     #  Tests that a logger can be created with custom arguments. Tags: [happy path]
     def test_creating_logger_with_custom_arguments(self):
+        MNTSLogger.cleanup()
         logger = MNTSLogger(log_dir='test.log', logger_name='test', verbose=False, log_level='debug', keep_file=True)
         assert logger._logger_name == 'test'
         assert logger._log_dir == str(Path('test.log').absolute())
@@ -51,7 +53,8 @@ class Test_MNTSLogger(unittest.TestCase):
             self.assertIsNone(logger._log_file)
 
     def test_keep_log_file(self):
-        with MNTSLogger(verbose=True, keep_file=True) as logger:
+        MNTSLogger.cleanup()
+        with MNTSLogger('test.log', 'test_keep_log', verbose=True, keep_file=True) as logger:
             logger.info("Logger keep_file ready")
             self.assertIsNotNone(logger._log_file)
             p = Path(logger._log_dir)
@@ -83,3 +86,16 @@ class Test_MNTSLogger(unittest.TestCase):
 
         obj = ("Abc", "DFE", [1, 2, 3])
         logger.inspect(obj)
+
+class TestMNTSLoggerRichColor(unittest.TestCase):
+    def setUp(self):
+        self.logger_name = "test_logger"
+        self.log_dir = "test.log"
+        self.logger = MNTSLogger(log_dir=self.log_dir, logger_name='logger1', verbose=True, keep_file=False)
+        self.logger2 = MNTSLogger(log_dir=self.log_dir, logger_name='logger2')
+
+    def tearDown(self):
+        MNTSLogger.cleanup()
+
+    def test_turn_off_rich_color(self):
+        MNTSLogger.turn_off_rich_color()
