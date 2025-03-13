@@ -17,11 +17,13 @@ import shutil
 global TORCH_EXIST
 try:
     import torch.distributed as dist
+
     TORCH_EXIST = True
 except ModuleNotFoundError:
     TORCH_EXIST = False
 
 __all__ = ['MNTSLogger', 'LogExceptions']
+
 
 class MNTSLogger(object):
     r"""Logger class that manages multiple logging instances.
@@ -53,24 +55,25 @@ class MNTSLogger(object):
 
     """
     global_logger = 'Init'
-    all_loggers   = {}
-    log_levels={
+    all_loggers = {}
+    log_levels = {
         'debug': logging.DEBUG,
         'info': logging.INFO,
         'warning': logging.WARNING,
         'error': logging.ERROR
     }
-    DEBUG         = logging.DEBUG
-    INFO          = logging.INFO
-    WARNING       = logging.WARNING
-    CRITICAL      = logging.CRITICAL
-    FATAL         = logging.FATAL
-    ERROR         = logging.ERROR
-    is_verbose    = False
+    DEBUG = logging.DEBUG
+    INFO = logging.INFO
+    WARNING = logging.WARNING
+    CRITICAL = logging.CRITICAL
+    FATAL = logging.FATAL
+    ERROR = logging.ERROR
+    is_verbose = False
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
     log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
     log_format_rich = "(%(name)s) %(message)s"
     use_rich: bool = True
+    shared_handlers = {}
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
         r"""Creates or retrieves a logger instance.
@@ -96,11 +99,11 @@ class MNTSLogger(object):
         if cls.global_logger == 'Init':
             logger_name = 'global'
             cls.global_logger = None
-            cls.global_logger = MNTSLogger(log_dir = log_dir,
-                                           logger_name = logger_name,
-                                           verbose = verbose,
-                                           log_level =log_level,
-                                           keep_file = keep_file)
+            cls.global_logger = MNTSLogger(log_dir=log_dir,
+                                           logger_name=logger_name,
+                                           verbose=verbose,
+                                           log_level=log_level,
+                                           keep_file=keep_file)
             cls.is_verbose = cls.global_logger._verbose
             cls.global_logger.sys_hook = sys.excepthook
             sys.excepthook = cls.global_logger.exception_hook
@@ -143,14 +146,13 @@ class MNTSLogger(object):
             return
 
         # Define attributes
-        self._log_file     = None
-        self._log_dir      = str(Path(log_dir).absolute())
-        self._verbose      = verbose
+        self._log_file = None
+        self._log_dir = str(Path(log_dir).absolute())
+        self._verbose = verbose
         self._warning_hash = {}
-        self._keep_file    = keep_file
-        self._logger_name  = logger_name
-        self._log_level    = str(log_level).lower()
-
+        self._keep_file = keep_file
+        self._logger_name = logger_name
+        self._log_level = str(log_level).lower()
 
         assert self._log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
             list(self.log_levels.keys()), log_level
@@ -168,66 +170,126 @@ class MNTSLogger(object):
 
         formatter = LevelFormatter(fmt=MNTSLogger.log_format)
 
-        if self._keep_file:
-            console = Console(color_system='truecolor', soft_wrap=True,
-                              width=max(shutil.get_terminal_size().columns, 160),
-                              file=self._log_file)
+        # if there's already a global logger, use it's handlers
+        if MNTSLogger.global_logger is not None:
+            for h in MNTSLogger.global_logger._logger.handlers:
+                self._logger.addHandler(h)
+        else:
+            if self._keep_file:
+                if not 'file_handler' in MNTSLogger.shared_handlers:
+                    file_handler = self._create_handler(self._logger, formatter, is_file_handler=True)
+                    MNTSLogger.shared_handlers['file_handler'] = file_handler
+                self._logger.addHandler(MNTSLogger.shared_handlers['file_handler'])
+
+            # create a new logger if requested logger was not already created
+            if not logger_name in MNTSLogger.all_loggers:
+                # Logger must have a stream handler
+                if not 'stream_handler' in MNTSLogger.shared_handlers:
+                    stream_handler = self._create_handler(self._logger, formatter, is_file_handler=False)
+                    MNTSLogger.shared_handlers['stream_handler'] = stream_handler
+                self._logger.addHandler(MNTSLogger.shared_handlers['stream_handler'])
+
+                # Set logger level
+                self._logger.setLevel(
+                    level=self.log_levels[self._log_level]
+                    if MNTSLogger.global_logger is None
+                    else MNTSLogger.global_logger._logger.level
+                )
+
+                # Put this logger in all_logger
+                MNTSLogger.all_loggers[logger_name] = self
+
+                # Messages
+                if self._log_file is not None:
+                    self.info(f"Logging to {self._log_dir} with log level: {self._logger.level}")
+                else:
+                    self.info(f"Logging to STDERR with log level: {self._logger.level}")
+            else:
+                msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
+                raise ArithmeticError(msg)
+
+    def _create_handler(self, logger, formatter, is_file_handler=False):
+        """
+        Add appropriate handlers (file or stream) to the logger.
+
+        Args:
+            logger (logging.Logger): The logger instance to which handlers will be added.
+            formatter (logging.Formatter): The formatter to be used by the handlers.
+            is_file_handler (bool): If True, add file handlers. Otherwise, add stream handlers.
+        """
+        if is_file_handler and self._keep_file:
+            assert self._log_file is not None
+            # This "console" writes to the log file
+            console = Console(
+                color_system="truecolor",
+                soft_wrap=True,
+                width=max(shutil.get_terminal_size().columns, 160),
+                file=self._log_file,
+            )
             if self.use_rich:
-                rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
-                                           show_level=True, markup=False, tracebacks_show_locals=True,
-                                           log_time_format = "[%Y-%m-%d %H:%M:%S]", omit_repeated_times=False
-                                           )
+                rich_handler = RichHandler(
+                    console=console,
+                    rich_tracebacks=True,
+                    show_path=False,
+                    show_time=True,
+                    show_level=True,
+                    markup=False,
+                    tracebacks_show_locals=True,
+                    log_time_format="[%Y-%m-%d %H:%M:%S]",
+                    omit_repeated_times=False,
+                )
                 rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
                 rich_handler.setFormatter(rich_formatter)
-                self._logger.addHandler(rich_handler)
+                return rich_handler
             else:
                 handler = logging.FileHandler(self._log_file)
                 handler.setFormatter(formatter)
-                self._logger.addHandler()
-
-        # create a new logger if requested logger was not already created
-        if not logger_name in MNTSLogger.all_loggers:
-            # OLD
-            # self._stream_handler = TqdmLoggingHandler(verbose=self._verbose)
-            # self._stream_handler.setFormatter(formatter)
-
+                return handler
+        else:
             if self.use_rich:
-                # Make sure the rich handler is using the correct output width
-                console = Console(color_system='truecolor', soft_wrap=True,
-                                  width=max(shutil.get_terminal_size().columns, 160),
-                                  stderr=True)
-                rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=True,
-                                           show_level=True, markup=False, tracebacks_show_locals=True,
-                                           log_time_format="[%Y-%m-%d %H:%M:%S]-R", locals_max_length=10,
-                                           locals_max_string=80
-                                           )
+                console = Console(
+                    color_system="truecolor",
+                    soft_wrap=True,
+                    width=max(shutil.get_terminal_size().columns, 160),
+                    stderr=True,  # Direct to STDERR
+                )
+                rich_handler = RichHandler(
+                    console=console,
+                    rich_tracebacks=True,
+                    show_path=False,
+                    show_time=True,
+                    show_level=True,
+                    markup=False,
+                    tracebacks_show_locals=True,
+                    log_time_format="[%Y-%m-%d %H:%M:%S]-R",
+                    locals_max_length=10,
+                    locals_max_string=80,
+                )
                 rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
                 rich_handler.setFormatter(rich_formatter)
-                self._stream_handler = rich_handler
-                self._logger.addHandler(rich_handler)
+                return rich_handler
             else:
                 stream_handler = logging.StreamHandler()
                 stream_handler.setFormatter(formatter)
-                self._logger.addHandler(stream_handler)
-            self._logger.setLevel(level=self.log_levels[self._log_level] if MNTSLogger.global_logger is None else
-                                                                MNTSLogger.global_logger._logger.level)
-            # put this in all_logger
-            MNTSLogger.all_loggers[logger_name] = self
-            if self._log_file is not None:
-                self.info(f"Loging to {self._log_dir} with log level: {self._logger.level}")
-            else:
-                self.info(f"Loging to STDERR with log level: {self._logger.level}")
-        else:
-            msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
-            raise ArithmeticError(msg)
+                return stream_handler
 
     def set_up_log_file(self):
         r"""Changes the self._log_dir according to options"""
         if MNTSLogger.global_logger is not None:
             # Update local attributes with global logger's attribute
+            original_log_file = self._log_file
+            original_log_dir = self._log_dir
+            original_keep_file = self._keep_file
             self._log_file = MNTSLogger.global_logger._log_file
             self._log_dir = MNTSLogger.global_logger._log_dir
             self._keep_file = MNTSLogger.global_logger._keep_file
+
+            if original_log_file != self._log_file:
+                self.warning(f"Log file changed from {original_log_file} to {self._log_file}")
+            if original_log_dir != self._log_dir:
+                self.warning(f"Log directory changed from {original_log_dir} to {self._log_dir}")
+            if original_keep_file != self._keep_file:
+                self.warning(f"Keep file setting changed from {original_keep_file} to {self._keep_file}")
         elif self._keep_file:
             self._log_file = open(self._log_dir, 'a')
             self._log_dir = self._log_file.name
@@ -268,6 +330,10 @@ class MNTSLogger(object):
     def _logger(self):
         return logging.getLogger(self._logger_name)
 
+    @property
+    def handlers(self):
+        self._logger.handlers
+
     @classmethod
     def set_global_log_level(cls, level):
         assert level in cls.log_levels, "Log levels available are: {}".format(','.join(cls.log_levels.keys()))
@@ -297,9 +363,35 @@ class MNTSLogger(object):
     def get_global_verbosity(cls):
         return cls.is_verbose
 
+    @classmethod
+    def set_global_logger(cls, logger: 'MNTSLogger'):
+        assert isinstance(logger, MNTSLogger)
+        cls.global_logger = logger
+        sys.excepthook = logger.exception_hook
+
+    @classmethod
+    def turn_off_rich_color(cls):
+        cls.use_rich = False
+        stream_handler = cls.shared_handlers.get('stream_handler', None)
+        if isinstance(stream_handler, RichHandler):
+            stream_handler.console._highlight = False
+        file_handler = cls.shared_handlers.get('file_handler', None)
+        if isinstance(file_handler, RichHandler):
+            file_handler.console._highlight = False
+
+    @classmethod
+    def turn_on_rich_color(cls):
+        cls.use_rich = False
+        stream_handler = cls.handlers('stream_handler', None)
+        if isinstance(stream_handler, RichHandler):
+            stream_handler.console._highlight = True
+        file_handler = cls.handlers.get('file_handler', None)
+        if isinstance(file_handler, RichHandler):
+            file_handler.console._highlight = True
+
     def set_verbose(self, b):
-        self._stream_handler.verbose=b
-        self._verbose=b
+        self._stream_handler.verbose = b
+        self._verbose = b
 
     def log_traceback(self):
         self.exception()
@@ -359,15 +451,15 @@ class MNTSLogger(object):
         elif not item in cls.all_loggers:
             if cls.global_logger is None:
                 cls.global_logger = MNTSLogger('./default.log', logger_name='default',
-                                           verbose=True, keep_file=False)
+                                               verbose=True, keep_file=False)
                 return MNTSLogger[item]
 
             cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(
                 str(item)
             ))
             cls.all_loggers[item] = MNTSLogger(cls.global_logger._log_dir,
-                                           logger_name=str(item),
-                                           verbose=cls.is_verbose)
+                                               logger_name=str(item),
+                                               verbose=cls.is_verbose)
             return cls.all_loggers[item]
         else:
             return cls.all_loggers[item]
@@ -418,7 +510,7 @@ class MNTSLogger(object):
         """
         default_kwargs = {
             'private': False,
-            'title': "Inspection",
+            'title': f"Inspection ({type(obj)})",
             'all': False
         }
         default_kwargs.update(kwargs)
@@ -456,7 +548,7 @@ class MNTSLogger(object):
 
     def __str__(self):
         msg = f"This logger: \n\t{self._logger_name}\n" \
-              f"All loggers: \n" + "\n".join(["\t- "+l for l in self.all_loggers]) + \
+              f"All loggers: \n" + "\n".join(["\t- " + l for l in self.all_loggers]) + \
               f"Logfile: \nt\t{self._log_dir}"
         return msg
 
@@ -489,6 +581,7 @@ class LogExceptions(object):
         # It was fine, give a normal answer
         return result
 
+
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET, verbose=False):
         super().__init__(level)
@@ -520,5 +613,6 @@ class LevelFormatter(logging.Formatter):
             return self._level_formatters[record.levelno].format(record)
 
         return super(LevelFormatter, self).format(record)
+
 
 atexit.register(MNTSLogger.cleanup)
