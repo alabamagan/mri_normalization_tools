@@ -371,16 +371,30 @@ class MNTSLogger(object):
 
     @classmethod
     def turn_off_rich_color(cls):
+        raise NotImplementedError # Does not work after resetting
         cls.use_rich = False
         stream_handler = cls.shared_handlers.get('stream_handler', None)
         if isinstance(stream_handler, RichHandler):
-            stream_handler.console._highlight = False
+            stream_handler.console = console = Console(
+                    color_system="truecolor",
+                    soft_wrap=True,
+                    width=max(shutil.get_terminal_size().columns, 120),
+                    stderr=True,  # Direct to STDERR
+                    highlight=False
+                )
         file_handler = cls.shared_handlers.get('file_handler', None)
         if isinstance(file_handler, RichHandler):
-            file_handler.console._highlight = False
+            file_handler.console = Console(
+                color_system="truecolor",
+                soft_wrap=True,
+                width=max(shutil.get_terminal_size().columns, 160),
+                file=MNTSLogger.global_logger._log_file,
+                highlight=False
+            )
 
     @classmethod
     def turn_on_rich_color(cls):
+        raise NotImplementedError
         cls.use_rich = False
         stream_handler = cls.handlers('stream_handler', None)
         if isinstance(stream_handler, RichHandler):
