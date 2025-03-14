@@ -5,7 +5,8 @@ import pytest
 from pathlib import Path
 import os
 import sys
-
+import io
+from unittest.mock import patch
 
 class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_default_arguments(self):
@@ -35,8 +36,42 @@ class Test_MNTSLogger(unittest.TestCase):
     #  Tests that the log level can be set. Tags: [happy path]
     def test_setting_log_level(self):
         logger = MNTSLogger()
-        logger.set_global_log_level('debug')
-        assert logger._logger.level == logging.DEBUG
+
+        # 模擬 stdout 和 stderr
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        def clear_buffer():
+            stdout_buffer.truncate(0)
+            stdout_buffer.seek(0)
+            stderr_buffer.truncate(0)
+            stderr_buffer.seek(0)
+
+        with patch('sys.stdout', stdout_buffer), patch('sys.stderr', stderr_buffer):
+            MNTSLogger.set_global_log_level('warning')
+
+            self.assertEqual(logger._logger.level, logging.WARNING)
+
+            # Clear messages from changing log level
+            clear_buffer()
+
+            # This should not print anything
+            logger.info("This shouldn't be seen")
+            stdout_content = stdout_buffer.getvalue()
+            stderr_content = stderr_buffer.getvalue()
+            clear_buffer()
+
+            # Assert nothing was printed
+            self.assertEqual(stdout_content, "")
+            self.assertEqual(stderr_content, "")
+
+            # This should print to stderr
+            logger.warning("Warning is here")
+            stdout_content = stdout_buffer.getvalue()
+            stderr_content = stderr_buffer.getvalue()
+
+            # Assert something was printed
+            self.assertIn("Warning is here", stderr_content)
+            self.assertEqual(stdout_content, "")
 
     def test_creating_multiple_loggers_with_different_names(self):
         r"""Tests that multiple loggers can be created with different names. Tags: [happy path]"""
@@ -99,3 +134,4 @@ class TestMNTSLoggerRichColor(unittest.TestCase):
 
     def test_turn_off_rich_color(self):
         MNTSLogger.turn_off_rich_color()
+        self.logger.info("Printing something without color")
