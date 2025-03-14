@@ -189,24 +189,25 @@ class MNTSLogger(object):
                     MNTSLogger.shared_handlers['stream_handler'] = stream_handler
                 self._logger.addHandler(MNTSLogger.shared_handlers['stream_handler'])
 
-                # Set logger level
-                self._logger.setLevel(
-                    level=self.log_levels[self._log_level]
-                    if MNTSLogger.global_logger is None
-                    else MNTSLogger.global_logger._logger.level
-                )
-
-                # Put this logger in all_logger
-                MNTSLogger.all_loggers[logger_name] = self
-
-                # Messages
-                if self._log_file is not None:
-                    self.info(f"Logging to {self._log_dir} with log level: {self._logger.level}")
-                else:
-                    self.info(f"Logging to STDERR with log level: {self._logger.level}")
             else:
                 msg = f"Duplicated MNTSLogger created with logger name: {self._logger_name}."
                 raise ArithmeticError(msg)
+
+        # Set logger level
+        self._logger.setLevel(
+            level=self.log_levels[self._log_level]
+            if MNTSLogger.global_logger is None
+            else MNTSLogger.global_logger._logger.level
+        )
+
+        # Put this logger in all_logger
+        MNTSLogger.all_loggers[logger_name] = self
+
+        # Messages
+        if self._log_file is not None:
+            self.info(f"Logging to {self._log_dir} with log level: {self._logger.level}")
+        else:
+            self.info(f"Logging to STDERR with log level: {self._logger.level}")
 
     def _create_handler(self, logger, formatter, is_file_handler=False):
         """
