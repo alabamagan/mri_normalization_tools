@@ -81,7 +81,8 @@ def _inference_normalization(G: MNTSFilterGraph,
     Returns:
         0
     """
-    state_path, in_path = [Path(p) for p in [state_dir, input_dir]]
+    state_path = Path(state_dir) if state_dir is not None else None
+    in_path = Path(input_dir)
     if isinstance(output_dir, (list, tuple)):
         out_path = [Path(p) for p in output_dir]
     elif isinstance(output_dir, str):
@@ -106,7 +107,8 @@ def _inference_normalization(G: MNTSFilterGraph,
                 images[i] = str(_new_path)
 
         # Load the trained normalization states
-        G.load_node_states(None, str(state_path))
+        if G.requires_training:
+            G.load_node_states(None, str(state_path))
 
         # Prepare arguments
         z = [out_names, [out_path], images]

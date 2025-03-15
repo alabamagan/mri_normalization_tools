@@ -1,4 +1,7 @@
 import unittest
+import SimpleITK as sitk
+import tempfile
+
 from mnts.filters import MNTSFilterGraph
 from mnts.filters.data_node import *
 from mnts.filters.intensity import *
@@ -25,6 +28,32 @@ N4ITKBiasFieldCorrection:
         upstream: [1, 2]
     
 NyulNormalizer:
+    _ext:
+        upstream: [3, 2]
+        is_exit: True
+
+"""
+
+test_yaml_no_train = \
+"""
+DataNode: 
+
+SpatialNorm:
+    out_spacing: [0.5, 0.5, 0]
+    _ext:
+        upstream: 0
+
+HuangThresholding:
+    closing_kernel_size: 10
+    _ext:
+        upstream: 1 
+        is_exit: True
+
+N4ITKBiasFieldCorrection:
+    _ext:
+        upstream: [1, 2]
+    
+ZScoreNorm:
     _ext:
         upstream: [3, 2]
         is_exit: True
@@ -77,6 +106,71 @@ class TestGraph(unittest.TestCase):
 
     def test_running_graph(self):
         pass
+
+    def test_running_graph_no_training(self):
+        """Test that a graph that doesn't require training skips the state loading step."""
+        # Create a graph that doesn't require training
+        with open('_test_graph_no_train.yaml', 'w') as f:
+            f.write(test_yaml_no_train)
+
+        G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph_no_train.yaml')
+        self.assertFalse(G.requires_training)
+
+        # Create a spy on the load_node_states method
+        original_load = G.load_node_states
+        load_called = [False]  # Using a list for modification in nested function
+
+        def spy_load(*args, **kwargs):
+            load_called[0] = True
+            return original_load(*args, **kwargs)
+
+        G.load_node_states = spy_load
+
+        # Create temporary directories for testing
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir) / "input"
+            output_dir = Path(temp_dir) / "output"
+            state_dir = Path(temp_dir) / "state"
+
+            input_dir.mkdir()
+            output_dir.mkdir()
+            state_dir.mkdir()
+
+            # Create a dummy input file
+            dummy_input = input_dir / "test.nii"
+            dummy_input.touch()
+
+            # Patch mpi_execute to avoid actual execution
+            original_execute = G.mpi_execute
+            execute_called = [False]
+
+            def spy_execute(*args, **kwargs):
+                execute_called[0] = True
+                return None
+
+            G.mpi_execute = spy_execute
+
+            # Import and call the function
+            from mnts.scripts.normalization import _inference_normalization
+
+            _inference_normalization(
+                G=G,
+                state_dir=state_dir,
+                input_dir=input_dir,
+                output_dir=[output_dir],
+                num_worker=0
+            )
+
+            # Verify that load_node_states was not called, but mpi_execute was
+            self.assertFalse(load_called[0], "load_node_states should not be called for a graph that doesn't require training")
+            self.assertTrue(execute_called[0], "mpi_execute should be called regardless of training requirements")
+
+        # Restore original methods
+        G.load_node_states = original_load
+        G.mpi_execute = original_execute
+
+        # Clean up
+        Path('_test_graph_no_train.yaml').unlink()
 
 if __name__ == '__main__':
     unittest.main()

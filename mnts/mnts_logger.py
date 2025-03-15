@@ -371,9 +371,13 @@ class MNTSLogger(object):
         cls.global_logger = logger
         sys.excepthook = logger.exception_hook
 
-    def set_verbose(self, b):
-        self._stream_handler.verbose = b
-        self._verbose = b
+    @classmethod
+    def set_verbose(cls, b):
+        if 'stream_handler' in cls.shared_handlers:
+            stream_handler = cls.shared_handlers['stream_handler']
+            if hasattr(stream_handler, 'verbose'):
+                stream_handler.verbose = b
+        cls._verbose = b
 
     def log_traceback(self):
         self.exception()
