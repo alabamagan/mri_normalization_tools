@@ -72,7 +72,8 @@ class MNTSLogger(object):
     log_level = os.getenv("MNT_LOGGER_LEVEL", default='info')
     log_format = "[%(asctime)-12s-%(levelname)s] (%(name)s) %(message)s"
     log_format_rich = "(%(name)s) %(message)s"
-    use_rich: bool = True
+    use_rich_stream: bool = True
+    use_rich_file: bool = False
     shared_handlers = {}
 
     def __new__(cls, log_dir='default.log', logger_name=__name__, verbose=True, log_level=log_level, keep_file=False):
@@ -227,8 +228,9 @@ class MNTSLogger(object):
                 soft_wrap=True,
                 width=max(shutil.get_terminal_size().columns, 160),
                 file=self._log_file,
+                highlight=self.use_rich_file
             )
-            if self.use_rich:
+            try:
                 rich_handler = RichHandler(
                     console=console,
                     rich_tracebacks=True,
@@ -243,12 +245,12 @@ class MNTSLogger(object):
                 rich_formatter = LevelFormatter(fmt=MNTSLogger.log_format_rich)
                 rich_handler.setFormatter(rich_formatter)
                 return rich_handler
-            else:
+            except:
                 handler = logging.FileHandler(self._log_file)
                 handler.setFormatter(formatter)
                 return handler
         else:
-            if self.use_rich:
+            if self.use_rich_stream:
                 console = Console(
                     color_system="truecolor",
                     soft_wrap=True,

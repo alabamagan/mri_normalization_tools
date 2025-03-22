@@ -11,6 +11,7 @@ sitk.ProcessObject_GlobalWarningDisplayOff()
 from functools import partial
 from pathlib import Path
 from mnts.utils.preprocessing import recursive_list_dir
+from mnts.io.dixon import DIXON_dcm_to_images
 from typing import Optional, Union, List, Tuple, Iterable, Dict
 from ..mnts_logger import MNTSLogger
 from tqdm.auto import tqdm
@@ -19,7 +20,6 @@ from tqdm.auto import tqdm
 try:
     import pydicom
     import pydicom_seg
-    from mnts.io.dixon import DIXON_dcm_to_images
     PYDICOM_SEG_AVAILABLE = True
 except:
     PYDICOM_SEG_AVAILABLE = False
@@ -354,28 +354,29 @@ class Dcm2NiiConverter:
                 self.logger.info(f"Detect segmentation files: {pprint.pformat(dcm_files)}")
                 outimage = self.read_segmentation(dcm_files)
                 return outimage, dcm_files
-            elif self.check_im_type:
-                # perform image type check, this is mainly written for DIXON
-                self.logger.info("Proceed with image type check...")
-                _outimage = DIXON_dcm_to_images(dcm_files)
-                if len(_outimage) > 1:
-                    # rewrite the dictionary keys
-                    outimage = {}
-                    for k, im in _outimage.items():
-                        if len(k) < 4:
-                            outimage['-'.join(k)] = im
-                        if k[3] == "W":
-                            # DIXON water image (fat-suppressed)
-                            outimage['FS'] = im
-                        elif k[3] == "IP":
-                            # DIXON regular image
-                            outimage['IP'] = im
-                        else:
-                            outimage['-'.join(k)] = im
-                else:
-                    # if there's only one image type, just do things regularly
-                    outimage = list(_outimage.values())[0]
-                return outimage, dcm_files
+
+        if self.check_im_type:
+            # perform image type check, this is mainly written for DIXON
+            self.logger.info("Proceed with image type check...")
+            _outimage = DIXON_dcm_to_images(dcm_files)
+            if len(_outimage) > 1:
+                # rewrite the dictionary keys
+                outimage = {}
+                for k, im in _outimage.items():
+                    if len(k) < 4:
+                        outimage['-'.join(k)] = im
+                    if k[3] == "W":
+                        # DIXON water image (fat-suppressed)
+                        outimage['FS'] = im
+                    elif k[3] == "IP":
+                        # DIXON regular image
+                        outimage['IP'] = im
+                    else:
+                        outimage['-'.join(k)] = im
+            else:
+                # if there's only one image type, just do things regularly
+                outimage = list(_outimage.values())[0]
+            return outimage, dcm_files
 
 
         # read image
@@ -457,18 +458,18 @@ def dicom2nii(folder: str,
     logger.info(f"Handling: {folder}")
     try:
         converter = Dcm2NiiConverter(folder,
-                                     out_dir,
-                                     seq_filters,
-                                     idglobber,
-                                     check_im_type,
-                                     use_patient_id,
-                                     use_top_level_fname,
-                                     add_scan_time,
-                                     root_dir,
-                                     idlist,
-                                     prefix,
-                                     debug,
-                                     dump_meta_data)
+                                     out_dir=out_dir,
+                                     seq_filters=seq_filters,
+                                     idglobber=idglobber,
+                                     check_im_type=check_im_type,
+                                     use_patient_id=use_patient_id,
+                                     use_top_level_fname=use_top_level_fname,
+                                     add_scan_time=add_scan_time,
+                                     root_dir=root_dir,
+                                     idlist=idlist,
+                                     prefix=prefix,
+                                     debug=debug,
+                                     dump_meta_data=dump_meta_data)
         converter.Execute()
     except Exception as e:
         logger.exception(e)
