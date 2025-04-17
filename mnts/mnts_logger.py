@@ -537,7 +537,7 @@ class MNTSLogger(object):
     def __str__(self):
         msg = f"This logger: \n\t{self._logger_name} ({self._log_level})\n" + \
               f"All loggers: \n" + "\n".join(["\t- " + l for l in self.all_loggers]) + '\n' + \
-              f"Logfile: \nt\t{self._log_dir}"
+              f"Logfile: \n\t{self._log_dir}"
         return msg
 
     def __repr__(self):
