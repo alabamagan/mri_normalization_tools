@@ -8,7 +8,7 @@ from ..mnts_logger import MNTSLogger
 from .sequence_check import unify_mri_sequence_name
 from typing import *
 
-__all__ = ['repeat_zip']
+__all__ = ['repeat_zip', 'organize_directory']
 
 def repeat_zip(*args):
     r"""
