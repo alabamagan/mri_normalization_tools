@@ -4,17 +4,21 @@ import logging
 import pytest
 from pathlib import Path
 import os
-
+import sys
+import io
+from unittest.mock import patch
 
 class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_default_arguments(self):
+        MNTSLogger.cleanup()
         logger = MNTSLogger()
         self.assertTrue(logger._verbose)
-        self.assertEqual(logger._log_level, 'info')
-        self.assertEqual(logger._keep_file, False)
+        self.assertEqual('info', logger._log_level)
+        self.assertEqual(False, logger._keep_file)
 
     #  Tests that a logger can be created with custom arguments. Tags: [happy path]
     def test_creating_logger_with_custom_arguments(self):
+        MNTSLogger.cleanup()
         logger = MNTSLogger(log_dir='test.log', logger_name='test', verbose=False, log_level='debug', keep_file=True)
         assert logger._logger_name == 'test'
         assert logger._log_dir == str(Path('test.log').absolute())
@@ -32,8 +36,42 @@ class Test_MNTSLogger(unittest.TestCase):
     #  Tests that the log level can be set. Tags: [happy path]
     def test_setting_log_level(self):
         logger = MNTSLogger()
-        logger.set_global_log_level('debug')
-        assert logger._logger.level == logging.DEBUG
+
+        # 模擬 stdout 和 stderr
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        def clear_buffer():
+            stdout_buffer.truncate(0)
+            stdout_buffer.seek(0)
+            stderr_buffer.truncate(0)
+            stderr_buffer.seek(0)
+
+        with patch('sys.stdout', stdout_buffer), patch('sys.stderr', stderr_buffer):
+            MNTSLogger.set_global_log_level('warning')
+
+            self.assertEqual(logger._logger.level, logging.WARNING)
+
+            # Clear messages from changing log level
+            clear_buffer()
+
+            # This should not print anything
+            logger.info("This shouldn't be seen")
+            stdout_content = stdout_buffer.getvalue()
+            stderr_content = stderr_buffer.getvalue()
+            clear_buffer()
+
+            # Assert nothing was printed
+            self.assertEqual(stdout_content, "")
+            self.assertEqual(stderr_content, "")
+
+            # This should print to stderr
+            logger.warning("Warning is here")
+            stdout_content = stdout_buffer.getvalue()
+            stderr_content = stderr_buffer.getvalue()
+
+            # Assert something was printed
+            self.assertIn("Warning is here", stderr_content)
+            self.assertEqual(stdout_content, "")
 
     def test_creating_multiple_loggers_with_different_names(self):
         r"""Tests that multiple loggers can be created with different names. Tags: [happy path]"""
@@ -46,4 +84,54 @@ class Test_MNTSLogger(unittest.TestCase):
         r"""Test that when keep_file option is set to False or is default, the log_file attribute is created by
         tempfile."""
         with MNTSLogger(verbose=True, keep_file=False) as logger:
+            logger.info("Logger ready")
+            self.assertIsNone(logger._log_file)
+
+    def test_keep_log_file(self):
+        MNTSLogger.cleanup()
+        with MNTSLogger('test.log', 'test_keep_log', verbose=True, keep_file=True) as logger:
+            logger.info("Logger keep_file ready")
             self.assertIsNotNone(logger._log_file)
+            p = Path(logger._log_dir)
+
+            # See how error is logged
+            with self.assertRaises(ZeroDivisionError):
+                try:
+                    10 / 0
+                except Exception as e:
+                    logger.exception(e)
+                    raise e
+        self.assertTrue(p.exists())
+        p.unlink()
+
+    def test_rich_traceback(self):
+        logger = MNTSLogger(verbose=True, log_level='DEBUG')
+
+        def not_good(x):
+            x *= 10
+            return x / 0
+
+        try:
+            not_good(20)
+        except Exception as e:
+            logger.exception(e)
+
+    def test_rich_inspect(self):
+        logger = MNTSLogger(verbose=True, log_level='DEBUG')
+
+        obj = ("Abc", "DFE", [1, 2, 3])
+        logger.inspect(obj)
+
+class TestMNTSLoggerRichColor(unittest.TestCase):
+    def setUp(self):
+        self.logger_name = "test_logger"
+        self.log_dir = "test.log"
+        self.logger = MNTSLogger(log_dir=self.log_dir, logger_name='logger1', verbose=True, keep_file=False)
+        self.logger2 = MNTSLogger(log_dir=self.log_dir, logger_name='logger2')
+
+    def tearDown(self):
+        MNTSLogger.cleanup()
+
+    def test_turn_off_rich_color(self):
+        MNTSLogger.turn_off_rich_color()
+        self.logger.info("Printing something without color")

@@ -8,7 +8,7 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False, return_glob_d
     .. warning::
         This function is for MRI only.
 
-    .. notes::
+    .. note::
         Contrast Mechanism:
             T1W    : T1-weighted image
             T2W    : T2-weighted image
@@ -79,7 +79,7 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False, return_glob_d
     }
 
     contrast = r"(?i)(\+C|C\+|contrast|post)"
-    fat_sat = r"(?i)(fs[^e]|fat_saturated|fat\Wsaturated|fat_saturated|fat_sat|fatsat|fat\Wsat|spir|spair|stir|chess)"
+    fat_sat = r"(?i)(fs([^e]|$)|fat_saturated|fat\Wsaturated|fat_saturated|fat_sat|fatsat|fat\Wsat|spir|spair|stir|chess)"
     dixon = r"(?i).*dixon.*"    # not used
 
     """
@@ -125,7 +125,7 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False, return_glob_d
     if w is None:
         w = 'MISC'
 
-    new_name = (f"[{'|'.join(t)}]_" if len(t) else '') +\
+    new_name = (f"[{'|'.join(t)}]_" if len(t) and glob_techniques else '') +\
                f"{'CE-' if c else ''}" + \
                f"{w}" + \
                ("-FS" if fs else '') + \

@@ -1,15 +1,18 @@
 import copy
 import operator
 import pprint
+from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Union
+from threading import Lock
 
 import SimpleITK as sitk
 import networkx as nx
 import numpy as np
 import yaml
 from cachetools import LRUCache, cachedmethod
+from functools import wraps
 
 from ..mnts_logger import MNTSLogger
 
@@ -23,6 +26,19 @@ _avail_filters.extend(dir(geom))
 _avail_filters.extend(dir(intensity))
 
 __all__ = ['MNTSFilterGraph']
+
+def _update_progress(func):
+    """Decorator to update progress bar after function call."""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        result = func(self, *args, **kwargs)
+        with self._thread_lock:
+            if self.progress_bar is not None:
+                self.progress_bar.update(1)
+        return result
+
+    return wrapper
+
 
 class MNTSFilterGraph(object):
     r"""
@@ -38,6 +54,9 @@ class MNTSFilterGraph(object):
         self._output = {}
         self._nodes_upstream = {}
         self._nodes_cache = LRUCache(maxsize=8)
+        self._thread_lock = Lock()
+        # This will be set if multi-thread is used
+        self.progress_bar = None
 
     @property
     def nodes(self):
@@ -102,12 +121,14 @@ class MNTSFilterGraph(object):
             # Get and parse the attributes
 
             _content = data_loaded.get(key, None)
+            _logger.debug(f"YAML content {_content = }")
             if _content is None:
                 steps.append(_filter_class())
             else:
                 # For list, there could be both args and kwargs.
                 if isinstance(_content, list):
                     _ext_kwargs = _content.pop('_ext', {})
+                    _logger.debug(f"{_ext_kwargs = }")
                     _args = [i for i in _content if not isinstance(i, dict)]
                     _kwargs = [i for i in _content if isinstance(i, dict)]
                     _kwargs = {} if len(_kwargs) == 0 else _kwargs[0]
@@ -116,8 +137,14 @@ class MNTSFilterGraph(object):
                 # If its just a dict, its kwargs
                 elif isinstance(_content, dict):
                     _ext_kwargs = _content.pop('_ext', {})
+                    _logger.debug(f"{_ext_kwargs = }")
                     _filter = _filter_class(**_content)
                     graph.add_node(_filter, **_ext_kwargs)
+
+        # check if result has exit
+        if len(graph._exits) == 0:
+            msg = "Your graph has no exit node and will do nothing."
+            raise ArithmeticError(msg)
         return graph
 
 
@@ -173,14 +200,22 @@ class MNTSFilterGraph(object):
 
         """
         assert isinstance(node, MNTSFilter), f"Wrong input type: {node}"
+        self._logger.info(f"Adding node {node} to the filter graph.")
+        self._logger.debug(f"Args: {node = }, {upstream = }, {is_exit = }")
+        self._logger.debug(f"ArgsTypes: {type(node) = }, {type(upstream) = }, {type(is_exit) = }")
 
+        # if there's no other node with a filter key associates with this current node (i.e., this node has been added
+        # before), add this node to the graph as a new one.
         if self._node_search('filter', node) == -1:
             _node_index = self._graph.number_of_nodes()
             self._graph.add_node(_node_index, filter=node)
             self._nodemap[_node_index] = node.get_name()
             if is_exit:
+                self._logger.debug(f"Node: {node} added as exits")
                 self._exits.append(_node_index)
+                self._logger.debug(f"{self._exits = }")
         else:
+            # Otherwise, just add the node index because the node is already here
             _node_index = self._node_search('filter', node)[0]
 
         if upstream is None:
@@ -316,6 +351,13 @@ class MNTSFilterGraph(object):
         # Clear cache
         return self._output
 
+
+    def close_progress_bar(self):
+        """Closes the tqdm progress bar."""
+        if self.progress_bar is not None:
+            self.progress_bar.close()
+
+    @_update_progress
     def mpi_execute(self,
                     output_prefix: Iterable[str],
                     output_directory: Union[str, Path, List[Union[str, Path]], Dict],
@@ -354,6 +396,30 @@ class MNTSFilterGraph(object):
 
         Returns:
             None
+
+        Example:
+        >>> from pathlib import Path
+        >>> # Assume MNTSFilterGraph is properly imported and initialized
+        >>> filter_graph = MNTSFilterGraph()
+        >>>
+        >>> # Example output prefixes and directories
+        >>> output_prefixes = ["output_1", "output_2"]
+        >>> output_directories = [
+        >>>     Path("output_directory_exitnode_1"),
+        >>>     Path("output_directory_exitnode_2"),
+        >>> ]
+        >>>
+        >>> # Example inputs for the entrance nodes
+        >>> input_data_1 = ...  # some input data
+        >>> input_data_2 = ...  # some other input data
+        >>>
+        >>> # Execute the function
+        >>> filter_graph.mpi_execute(
+        >>>     output_prefixes,
+        >>>     output_directories,
+        >>>     input_data_1,
+        >>>     input_data_2
+        >>> )
         """
         #!! Might get some memory issue here, but should be managible.
         # Create a copy of this class to separate
@@ -374,7 +440,7 @@ class MNTSFilterGraph(object):
                         output_directory = {v: _od.joinpath(self.nodes[v]['filter'].get_name()) for v in self._exits}
                     else:
                         raise IndexError("The lenth of output directories specified do not match the number of "
-                                         "exit nodes.")
+                                         f"exit nodes: {output_directory = }")
                 else:
                     output_directory = {v: output_directory[n] for n, v in enumerate(self._exits)}
             elif isinstance(output_directory, dict):
@@ -405,6 +471,10 @@ class MNTSFilterGraph(object):
             cls_obj._logger.info(f"Writing to output {out_im_name}")
             sitk.WriteImage(out_im, str(out_im_name))
         return 0
+
+    def set_progress_bar(self, total_tasks):
+        """Sets the progress bar for the graph."""
+        self.progress_bar = tqdm(total=total_tasks, desc="Processing", unit="task")
 
     def check_output(self, output_directory, output_prefix):
         r"""
@@ -582,7 +652,24 @@ class MNTSFilterGraph(object):
 
     def load_node_states(self,
                          nodelist: List[Union[int, MNTSFilter]],
-                         save_dir: Union[str, Path]):
+                         save_dir: Union[str, Path]) -> None:
+        """Loads the saved states for specified nodes.
+
+        This method loads the trained states for nodes specified in the `nodelist`
+        from the given directory or file path.
+
+        Args:
+            nodelist (List[Union[int, MNTSFilter]]):
+                A list of nodes for which the states need to be loaded. If `None`,
+                it defaults to all nodes that require training.
+            save_dir (Union[str, Path]):
+                The path to the directory or file containing the saved states.
+
+        Raises:
+            IOError: If the specified `save_dir` does not exist.
+            ArithmeticError: If a specified node is not trainable.
+
+        """
         save_dir = Path(save_dir)
         if not save_dir.exists() :
             raise IOError(f"Cannot open directory/file to load the states, got {save_dir}")
