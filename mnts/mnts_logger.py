@@ -238,7 +238,7 @@ class MNTSLogger(object):
                     show_time=True,
                     show_level=True,
                     markup=False,
-                    tracebacks_show_locals=True,
+                    tracebacks_show_locals=False,
                     log_time_format="[%Y-%m-%d %H:%M:%S]",
                     omit_repeated_times=False,
                 )
@@ -264,7 +264,7 @@ class MNTSLogger(object):
                     show_time=True,
                     show_level=True,
                     markup=False,
-                    tracebacks_show_locals=True,
+                    tracebacks_show_locals=False,
                     log_time_format="[%Y-%m-%d %H:%M:%S]-R",
                     locals_max_length=10,
                     locals_max_string=80,
