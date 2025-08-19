@@ -44,7 +44,8 @@ def repeat_zip(*args):
 
 def organize_directory(d: Union[Path, str],
                        target_dir: Optional[Union[Path, str]] = None,
-                       regpat: Optional[str] = None, warn_duplicate: bool = False):
+                       regpat: Optional[str] = None, warn_duplicate: bool = False,
+                       dry_run: Optional[bool] = False):
     r"""Organizes a directory of NIfTI image files into subdirectories.
 
     This function takes a directory path as input and organizes NIfTI image
@@ -65,6 +66,9 @@ def organize_directory(d: Union[Path, str],
             If True, issues a warning when
             duplicate image files for the same patient ID and modality are
             found. Defaults to `False`.
+        dry_run (bool, Optional):
+            If True, only create the dataframe and will not move the files.
+            Defaults to `False`.
 
     Raises:
         TypeError:

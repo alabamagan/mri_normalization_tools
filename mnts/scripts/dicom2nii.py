@@ -22,23 +22,29 @@ def dicom2nii(a, logger):
     logger.info(f"Specified ID globber: {a.idglobber}")
     logger.info(f"Use patient ID: {a.usepid}")
     ids = a.idlist.split(',') if not a.idlist is None else None
+    if not ids is None:
+        logger.info(f"Use patient ids for filtering: {ids}")
     dicom_dirs = preprocessing.recursive_list_dir(a.depth, a.input)
     logger.info(f"Dirs:\n{dicom_dirs}")
 
-    batch_dicom2nii(dicom_dirs,
-                    out_dir = a.output,
-                    workers = a.num_workers,
-                    seq_filters = None,
-                    idglobber = a.idglobber,
-                    check_im_type = a.check_image_type_tag,
-                    use_patient_id = a.usepid,
-                    use_top_level_fname = a.usefname,
-                    add_scan_time = a.addtime,
-                    root_dir = a.input,
-                    idlist = ids,
-                    prefix = a.prefix,
-                    debug = a.debug,
-                    dump_meta_data = a.dump_dicom_tags)
+    try:
+        batch_dicom2nii(dicom_dirs,
+                        out_dir = a.output,
+                        workers = a.num_workers,
+                        seq_filters = None,
+                        idglobber = a.idglobber,
+                        check_im_type = a.check_image_type_tag,
+                        use_patient_id = a.usepid,
+                        use_top_level_fname = a.usefname,
+                        add_scan_time = a.addtime,
+                        root_dir = a.input,
+                        idlist = ids,
+                        prefix = a.prefix,
+                        debug = a.debug,
+                        dump_meta_data = a.dump_dicom_tags)
+    except KeyboardInterrupt as e:
+        logger.warning("Keyboard interrupt detected. Exiting.")
+        return
 
 
 def console_entry(raw_args=None):
