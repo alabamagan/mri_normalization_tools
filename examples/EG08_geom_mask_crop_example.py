@@ -50,8 +50,8 @@ def main():
 
     # Create the crop filter with custom parameters
     crop_filter = RemoveShoulder(
-        padding=10,  # Add 10 voxels padding around the cropped region
-        min_area_threshold=0.05  # Ignore slices with area < 5% of maximum
+        min_area_threshold=0.05,  # Ignore slices with area < 5% of maximum
+        barrier=5  # Count backwards 5 slices from the end when searching
     )
 
     # Apply the filter

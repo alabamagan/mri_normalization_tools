@@ -47,22 +47,20 @@ class TestGeomMaskCrop(unittest.TestCase):
 
     def test_barrier_nonzero(self):
         """Test barrier functionality with barrier > 0."""
-        # Create a mask where slice 2 has the smallest area but we set barrier=3
+        # Create a mask where slices 2 and 4 have small areas
         mask_array = np.ones((10, 10, 10))
-        mask_array[0:2, :, :] = 0  # Remove first 2 slices
-        mask_array[8:10, :, :] = 0  # Remove last 2 slices
-        mask_array[2, 5:10, 5:10] = 0  # Make slice 2 smaller (area = 25)
-        mask_array[4, 3:10, 3:10] = 0  # Make slice 4 smaller (area = 49) but after barrier
+        mask_array[2, 5:10, 5:10] = 0  # Make slice 2 smaller 
+        mask_array[4, 3:10, 3:10] = 0  # Make slice 4 smallest 
 
         # Calculate slice areas
         temp_filter = RemoveShoulder()
         slice_areas = temp_filter._calculate_slice_areas(mask_array)
+        print(slice_areas)
 
-        # Test with barrier=3 (ignore first 3 slices)
+        # Test with barrier=3 (count backwards 3 slices from end, so consider indices 0-6)
         filter_obj = RemoveShoulder(barrier=3, min_area_threshold=0.0)
         min_slice = filter_obj._find_minimum_area_slice(slice_areas)
 
-        # Should find slice 4 (index 4) as it has the smallest area after barrier
         self.assertEqual(min_slice, 4)
 
     def test_barrier_larger_than_array(self):
@@ -70,8 +68,8 @@ class TestGeomMaskCrop(unittest.TestCase):
         mask_array = np.ones((5, 10, 10))
         slice_areas = np.array([100, 50, 30, 80, 20])
 
-        # Test with barrier larger than array
-        filter_obj = RemoveShoulder(barrier=10, min_area_threshold=0.0)
+        # Test with barrier larger than array (5 >= 5)
+        filter_obj = RemoveShoulder(barrier=5, min_area_threshold=0.0)
         min_slice = filter_obj._find_minimum_area_slice(slice_areas)
 
         # Should return None as no valid slices after barrier
@@ -79,16 +77,14 @@ class TestGeomMaskCrop(unittest.TestCase):
 
     def test_min_area_threshold_with_barrier(self):
         """Test interaction between barrier and min_area_threshold."""
-        mask_array = np.ones((10, 10, 10))
-        mask_array[0:2, :, :] = 0  # Remove first 2 slices
-        mask_array[8:10, :, :] = 0  # Remove last 2 slices
-
+        # With barrier=3, we consider slices 0,1,2,3,4,5,6 (up to index 9-3=6)
         slice_areas = np.array([100, 10, 25, 80, 49, 60, 70, 80, 90, 100])
 
-        # Test with barrier=3 and min_area_threshold that excludes slice 4
-        filter_obj = RemoveShoulder(barrier=3, min_area_threshold=0.5)  # threshold = 50
+        # Test with barrier=3 and min_area_threshold=0.5 (threshold = 50)
+        filter_obj = RemoveShoulder(barrier=3, min_area_threshold=0.5)
         min_slice = filter_obj._find_minimum_area_slice(slice_areas)
-        self.assertEqual(min_slice, 5) # Should ignore 10 & 25
+        # Should find slice 5 (60) as it's the smallest area >= 50 within barrier range
+        self.assertEqual(min_slice, 5)
 
     def test_filter_full_pipeline(self):
         """Test the complete filter pipeline with barrier."""
@@ -99,13 +95,54 @@ class TestGeomMaskCrop(unittest.TestCase):
         mask_array[5, 3:8, 3:8] = 0  # Make slice 5 smaller (area = 25)
         mask = sitk.GetImageFromArray(mask_array.astype(np.uint8))
 
-        # Apply filter with barrier=4 (ignore first 4 slices)
-        filter_obj = RemoveShoulder(barrier=4, padding=0, min_area_threshold=0.0)
+        # Apply filter with barrier=4 (count backwards 4 slices from end)
+        filter_obj = RemoveShoulder(barrier=4, min_area_threshold=0.0)
         cropped_image = filter_obj.filter(self.test_image, mask)
 
-        # The filter should crop around slice 5
+        # The filter should crop only the z-dimension (dimension=0) to 1 slice
+        # Other dimensions should remain at full size
         cropped_size = cropped_image.GetSize()
-        self.assertEqual(cropped_size[0], 1)  # Should be 1 slice thick due to padding=0
+        self.assertEqual(cropped_size[0], 1)   # Z-dimension: 1 slice (cropped)
+        self.assertEqual(cropped_size[1], 10)  # Y-dimension: full size (unchanged)
+        self.assertEqual(cropped_size[2], 10)  # X-dimension: full size (unchanged)
+
+    def test_crop_dimension_1(self):
+        """Test cropping along y-dimension (dimension=1)."""
+        # Create a test mask with known minimum area slice
+        mask_array = np.ones((10, 10, 10))
+        mask_array[:, 0:3, :] = 0  # Remove first 3 slices in y
+        mask_array[:, 7:10, :] = 0  # Remove last 3 slices in y
+        mask_array[:, 5, 3:8] = 0   # Make slice 5 smaller in y-dimension
+        mask = sitk.GetImageFromArray(mask_array.astype(np.uint8))
+
+        # Apply filter along y-dimension (dimension=1)
+        filter_obj = RemoveShoulder(dimension=1, barrier=0, min_area_threshold=0.0)
+        cropped_image = filter_obj.filter(self.test_image, mask)
+
+        # Should crop only y-dimension to 1 slice, keep z and x full
+        cropped_size = cropped_image.GetSize()
+        self.assertEqual(cropped_size[0], 10)  # Z-dimension: full size (unchanged)
+        self.assertEqual(cropped_size[1], 1)   # Y-dimension: 1 slice (cropped)
+        self.assertEqual(cropped_size[2], 10)  # X-dimension: full size (unchanged)
+
+    def test_crop_dimension_2(self):
+        """Test cropping along x-dimension (dimension=2)."""
+        # Create a test mask with known minimum area slice
+        mask_array = np.ones((10, 10, 10))
+        mask_array[:, :, 0:3] = 0  # Remove first 3 slices in x
+        mask_array[:, :, 7:10] = 0  # Remove last 3 slices in x
+        mask_array[:, 3:8, 5] = 0   # Make slice 5 smaller in x-dimension
+        mask = sitk.GetImageFromArray(mask_array.astype(np.uint8))
+
+        # Apply filter along x-dimension (dimension=2)
+        filter_obj = RemoveShoulder(dimension=2, barrier=0, min_area_threshold=0.0)
+        cropped_image = filter_obj.filter(self.test_image, mask)
+
+        # Should crop only x-dimension to 1 slice, keep z and y full
+        cropped_size = cropped_image.GetSize()
+        self.assertEqual(cropped_size[0], 10)  # Z-dimension: full size (unchanged)
+        self.assertEqual(cropped_size[1], 10)  # Y-dimension: full size (unchanged)
+        self.assertEqual(cropped_size[2], 1)   # X-dimension: 1 slice (cropped)
 
 
 if __name__ == '__main__':
