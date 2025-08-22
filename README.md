@@ -1,4 +1,12 @@
-# Introduction
+# MRI Normalization Tools
+
+[![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://badge.fury.io/py/mri-normalization-tools.svg)](https://badge.fury.io/py/mri-normalization-tools)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub issues](https://img.shields.io/github/issues/alabamagan/mri_normalization_tools.svg)](https://github.com/alabamagan/mri_normalization_tools/issues)
+[![GitHub stars](https://img.shields.io/github/stars/alabamagan/mri_normalization_tools.svg)](https://github.com/alabamagan/mri_normalization_tools/stargazers)
+
+## Introduction
 
 Radiomics is the high-throughput data mining of imaging features to identify potential markers that are relevant to a
 pathology or an interesting trait. It has the potential to enable personalized treatment design and disease management.
@@ -19,6 +27,17 @@ In other words, same image normalized differently gives different radiomics feat
 comparison. With this regards, this code repo aims to provide a user-friendly and standardized way to normalize the
 images
 
+## Features
+
+- **Bias Field Correction**: N4ITK bias field correction for improved image quality
+- **Spatial Normalization**: Resampling and orientation correction
+- **Intensity Normalization**: Multiple algorithms including Nyul, Z-score, and histogram matching
+- **Graph-based Pipeline**: Flexible filter chaining with automatic dependency management
+- **Training Support**: Built-in training workflows for normalization algorithms requiring training
+- **MPI Support**: Parallel processing capabilities for large datasets
+- **YAML Configuration**: Define normalization pipelines using YAML files
+- **Console Interface**: Command-line tools for training and inference workflows
+
 ## Key Functions
 
 This repo aims to maximize the repeatability of the image normalization pipeline, with a focus of MRI. Normalization
@@ -38,12 +57,37 @@ generally consist of the following steps:
 - cachetools >=4.2.2
 - netgraph >= 0.7.0
 
-# Install
+# Installation
 
-Installation using pip
+## PyPI Installation
 
 ```bash
-pip install git+https://github.com/alabamagan/mri_normalization_tools
+pip install mri-normalization-tools
+```
+
+## Development Installation
+
+```bash
+git clone https://github.com/alabamagan/mri_normalization_tools.git
+cd mri_normalization_tools
+pip install -e .
+```
+
+## Quick Start
+
+```python
+from mnts.filters.geom import SpatialNorm
+from mnts.filters.intensity import N4ITKBiasFieldCorrection, NyulNormalizer
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
+
+# Create normalization graph
+G = MNTSFilterGraph()
+G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
+G.add_node(N4ITKBiasFieldCorrection(), [0])
+G.add_node(NyulNormalizer(), [1], is_exit=True)
+
+# Process an image
+result = G.execute("path/to/your/image.nii.gz")
 ```
 
 # Examples
