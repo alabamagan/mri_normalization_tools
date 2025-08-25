@@ -91,6 +91,10 @@ class MNTSFilterGraph(object):
     def CreateGraphFromYAML(yaml_file: Union[Path, str]):
         r"""
 
+        .. note::
+            For multiple same type of nodes use suffix "_X" to creat a unique
+            identification. Otherwise, there will be an error.
+
         Args:
             yaml_file (Path or str):
                 Text file containing
@@ -113,7 +117,7 @@ class MNTSFilterGraph(object):
         for key in data_loaded:
             # Check if the specified filter exist
             try:
-                _filter_class = eval(key)
+                _filter_class = eval(key.split('_')[0])
             except AttributeError:
                 _logger.exception(f"Cannot load filter: {key}")
                 _logger.error(f"{key} is not in the available list {_avail_filters}")
@@ -684,6 +688,10 @@ class MNTSFilterGraph(object):
             trained_node = self._node_search('filter', n) if isinstance(n, MNTSFilter) else n
             trained_node_filter = self.nodes[n]['filter']
             trained_node_name = f"{n}_" + trained_node_filter.get_name()
+            if not save_dir.joinpath(trained_node_name).is_dir():
+                # Try to find the state by node name
+                self._logger.warning("Cannot find trained state with correct number. Searching node name.")
+                trained_node_name = trained_node_filter.get_name()
             # check if the target node is trainable
             if not isinstance(trained_node_filter, MNTSFilterRequireTraining):
                 raise ArithmeticError(f"Specified node {trained_node_name} is not trainable.")
