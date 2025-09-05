@@ -41,6 +41,7 @@ def dicom2nii(a, logger):
                     dump_meta_data = a.dump_dicom_tags)
 
 
+
 def console_entry(raw_args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', type=str, action='store', dest='input', required=True,

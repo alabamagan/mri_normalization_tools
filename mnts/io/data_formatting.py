@@ -16,6 +16,60 @@ from typing import Optional, Union, List, Tuple, Iterable, Dict
 from ..mnts_logger import MNTSLogger
 from tqdm.auto import tqdm
 
+
+def parse_custom_filename_format(format_string: str, all_dicom_tags: Dict[str, str], logger) -> str:
+    r"""Parse custom filename format string and replace DICOM tags with their values.
+    
+    This function takes a format string containing DICOM tags enclosed in backticks
+    and replaces them with the corresponding tag values from the DICOM file.
+    
+    Args:
+        format_string (str):
+            Format string with DICOM tags in backticks, e.g., "`0008|103e`-`1030|2003`"
+        all_dicom_tags (Dict[str, str]):
+            Dictionary containing all DICOM tags and their values
+        logger:
+            Logger instance for logging warnings and debug information
+            
+    Returns:
+        str:
+            Formatted string with DICOM tags replaced by their values,
+            with special characters escaped for safe filename usage
+            
+    Examples:
+        >>> tags = {'0008|103e': 'T1_MPRAGE', '1030|2003': 'PROTOCOL_1'}
+        >>> parse_custom_filename_format("`0008|103e`-`1030|2003`", tags, logger)
+        'T1_MPRAGE-PROTOCOL_1'
+    """
+    if not format_string:
+        return ""
+    
+    # Find all DICOM tags in backticks using regex
+    tag_pattern = r'`([0-9a-fA-F]{4}\|[0-9a-fA-F]{4})`'
+    matches = re.findall(tag_pattern, format_string)
+    
+    result = format_string
+    for tag in matches:
+        tag_value = all_dicom_tags.get(tag, 'Missing')
+        if tag_value == 'Missing':
+            logger.warning(f"DICOM tag [{tag}] not found, using 'Missing' as default")
+        
+        # Escape special characters that could cause problems in filenames
+        # Apply the same cleaning logic as used for description in construct_ouputpath
+        escaped_value = str(tag_value).rstrip().rstrip(' ')
+        escaped_value = re.sub(' +', '_', escaped_value)  # Replace multiple spaces with underscore
+        escaped_value = re.sub(r'/+', '_', escaped_value)  # Replace slashes with underscore
+        escaped_value = re.sub('[<>:"|?*]', '_', escaped_value)  # Replace other problematic characters
+        
+        # Replace the tag in backticks with the escaped value
+        result = result.replace(f'`{tag}`', escaped_value)
+        
+        logger.debug(f"Replaced DICOM tag `{tag}` with value: {escaped_value}")
+    
+    return result
+
+
+
 # These are optional packages installed by `pip install -e .[dicom]`
 try:
     import pydicom
@@ -63,6 +117,12 @@ class Dcm2NiiConverter:
             Flag indicating whether to run in debug mode.
         dump_meta_data (bool, optional):
             Flag indicating whether to dump DICOM metadata to a JSON file.
+        custom_filename_format (str, optional):
+            Custom filename format string using DICOM tags in backticks.
+            Example: "`0008|103e`-`1030|2003`" will create filenames like
+            "PROTOCOL_NAME-TAG_VALUE". If specified, this replaces the default
+            description part of the filename. DICOM tags should be in format
+            "XXXX|XXXX" (hexadecimal with pipe separator).
 
     Attributes:
         workerid (str):
@@ -92,7 +152,8 @@ class Dcm2NiiConverter:
                  idlist             : Optional[Union[List, Tuple]]  = None,
                  prefix             : Optional[str]                 = "",
                  debug              : Optional[bool]                = False,
-                 dump_meta_data     : Optional[bool]                = False) -> None:
+                 dump_meta_data     : Optional[bool]                = False,
+                 custom_filename_format: Optional[str]             = None) -> None:
         # Initialize class
         self.folder = folder
         self.out_dir = out_dir
@@ -107,6 +168,7 @@ class Dcm2NiiConverter:
         self.prefix = prefix
         self.debug = debug
         self.dump_meta_data = dump_meta_data
+        self.custom_filename_format = custom_filename_format
 
         # Worker ID and logger setup
         self.workerid = mpi.current_process().name
@@ -222,11 +284,20 @@ class Dcm2NiiConverter:
         if self.add_scan_time:
             final_prefix = final_prefix + '_' + tags['0008|0020']
 
-        # Add this to path for clarity
-        description = re.sub(' +', '_', tags['0008|103e'])
-
-        # Remove slash because some people are stupid and put it in description that will mess with path
-        description = re.sub('\/+', '_', description)
+        # Handle custom filename format or use default description
+        if self.custom_filename_format:
+            # Use custom format to generate description
+            description = parse_custom_filename_format(
+                self.custom_filename_format,
+                all_dicom_tags,
+                self.logger
+            )
+            self.logger.debug(f"Using custom filename format: {self.custom_filename_format} -> {description}")
+        else:
+            # Use default description from DICOM tag (0008|103e)
+            description = re.sub(' +', '_', tags['0008|103e'])
+            # Remove slash because some people are stupid and put it in description that will mess with path
+            description = re.sub(r'/+', '_', description)
 
         # Output path structure
         outname = self.out_dir + '/%s-%s+%s.nii.gz'%(final_prefix,
@@ -444,10 +515,28 @@ def dicom2nii(folder: str,
               idlist = None,
               prefix = "",
               debug = False,
-              dump_meta_data = False) -> None:
+              dump_meta_data = False,
+              custom_filename_format: str = None) -> None:
     """Covert a series under specified folder into an nii.gz image.
     This tries to assign a unique ID to each of the converted images, either based on their patient id DICOM tag or
     the folder containing the image series.
+    
+    Args:
+        folder (str): The folder where the DICOM images are located.
+        out_dir (str, optional): The output directory for converted NIfTI images.
+        seq_filters (list or str, optional): Sequence filters for DICOM series.
+        idglobber (str, optional): Regex for extracting ID from path.
+        check_im_type (bool, optional): Check DICOM tag (0008,0008) for image types.
+        use_patient_id (bool, optional): Use patient ID in the file name.
+        use_top_level_fname (bool, optional): Use top level file name.
+        add_scan_time (bool, optional): Add scan time to filename.
+        root_dir: Root path for top level filename option.
+        idlist: List of IDs to process.
+        prefix (str, optional): Prefix to add to output file name.
+        debug (bool, optional): Run in debug mode.
+        dump_meta_data (bool, optional): Dump DICOM metadata to JSON file.
+        custom_filename_format (str, optional): Custom filename format using DICOM tags.
+            Example: "`0008|103e`-`1030|2003`" creates "PROTOCOL_NAME-TAG_VALUE" format.
 
     See Also:
         :class:`Dcm2NiiConvertre`
@@ -469,7 +558,8 @@ def dicom2nii(folder: str,
                                      idlist=idlist,
                                      prefix=prefix,
                                      debug=debug,
-                                     dump_meta_data=dump_meta_data)
+                                     dump_meta_data=dump_meta_data,
+                                     custom_filename_format=custom_filename_format)
         converter.Execute()
     except Exception as e:
         logger.exception(e)
@@ -483,13 +573,21 @@ def batch_dicom2nii(folderlist, out_dir,
     r"""
     Batch version, use entry point in script instead of using this directly.
 
+    Args:
+        folderlist: List of folders containing DICOM images to convert.
+        out_dir: Output directory for converted NIfTI images.
+        workers (int, optional): Number of worker processes for parallel processing.
+            Defaults to 8. If None or 1, processes sequentially.
+        **kwargs: Additional keyword arguments passed to dicom2nii function,
+            including custom_filename_format for custom filename generation.
+
     See Also:
         func:`dicom2nii`
     """
     import multiprocessing as mpi
     logger = MNTSLogger['mpi_dicom2nii']
 
-    if workers > 1:
+    if workers is not None and workers > 1:
         pool = mpi.Pool(workers)
         for f in folderlist:
             logger.info(f"Creating job for: {f}.")
