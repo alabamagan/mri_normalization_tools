@@ -3,9 +3,15 @@ from ..utils import preprocessing
 from ..io import batch_dicom2nii
 import argparse
 import os
+import ast
 from pathlib import Path
 
 __all__ = ['dicom2nii']
+
+def _str_to_dict(in_str):
+    out = ast.literal_eval(in_str)
+    assert type(out) == dict, f"Output eval from {in_str} is not a dictionary"
+    return out
 
 def dicom2nii(a, logger):
     if not Path(a.input).is_dir():
@@ -37,6 +43,7 @@ def dicom2nii(a, logger):
                     root_dir = a.input,
                     idlist = ids,
                     prefix = a.prefix,
+                    regex_replace = _str_to_dict(a.regex_replace),
                     debug = a.debug,
                     dump_meta_data = a.dump_dicom_tags)
 
@@ -72,6 +79,8 @@ def console_entry(raw_args=None):
     parser.add_argument('--add-scan-time', action='store_true', dest='addtime',
                         help='Specify this to include timestamp to filename. Useful when same patient has '
                              'multiple scans with the same protocol.')
+    parser.add_argument('--regex-replace', type=str, help="Dictionary where key are regex matcher and key is "
+                                                          "replace value. Default to None", default=None)
     parser.add_argument('--log', action='store_true', dest='log',
                         help='Keep log file under ./dicom2nii.log')
     parser.add_argument('--verbose', action='store_true',

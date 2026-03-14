@@ -117,6 +117,10 @@ class Dcm2NiiConverter:
             Flag indicating whether to run in debug mode.
         dump_meta_data (bool, optional):
             Flag indicating whether to dump DICOM metadata to a JSON file.
+        regex_replace (dict, optional):
+            If exist as a dictionary, change name of the file by replaceing matched regex key
+            with it's value. E.g. if {'.*(name).*': 'Anonymized'}, the string "name" would be
+            replaced by "Anonymized". This runs as the last step just before file write.
         custom_filename_format (str, optional):
             Custom filename format string using DICOM tags in backticks.
             Example: "`0008|103e`-`1030|2003`" will create filenames like
@@ -153,6 +157,7 @@ class Dcm2NiiConverter:
                  prefix             : Optional[str]                 = "",
                  debug              : Optional[bool]                = False,
                  dump_meta_data     : Optional[bool]                = False,
+                 regex_replace      : Optional[dict]                = None,
                  custom_filename_format: Optional[str]             = None) -> None:
         # Initialize class
         self.folder = folder
@@ -168,6 +173,7 @@ class Dcm2NiiConverter:
         self.prefix = prefix
         self.debug = debug
         self.dump_meta_data = dump_meta_data
+        self.regex_replace = regex_replace
         self.custom_filename_format = custom_filename_format
 
         # Worker ID and logger setup
@@ -299,6 +305,11 @@ class Dcm2NiiConverter:
             # Remove slash because some people are stupid and put it in description that will mess with path
             description = re.sub(r'/+', '_', description)
 
+        # if replace regex is set
+        if self.regex_replace is not None:
+            for reg_k, reg_v in self.regex_replace.items():
+                description = re.sub(reg_k, reg_v, description)
+
         # Output path structure
         outname = self.out_dir + '/%s-%s+%s.nii.gz'%(final_prefix,
                                                 description,
@@ -368,6 +379,7 @@ class Dcm2NiiConverter:
             # Write image
             if isinstance(outimage, sitk.Image):
                 self.logger.info(f"Writting: {constructed_outname}")
+                # put some of the meta into the nifti header
                 outimage.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
                 sitk.WriteImage(outimage, constructed_outname)
             elif isinstance(outimage, dict):
@@ -515,6 +527,7 @@ def dicom2nii(folder: str,
               idlist = None,
               prefix = "",
               debug = False,
+              regex_replace = None,
               dump_meta_data = False,
               custom_filename_format: str = None) -> None:
     """Covert a series under specified folder into an nii.gz image.
@@ -534,6 +547,7 @@ def dicom2nii(folder: str,
         idlist: List of IDs to process.
         prefix (str, optional): Prefix to add to output file name.
         debug (bool, optional): Run in debug mode.
+        regex_replace (bool, dict): Replace regex matched key with it's value.
         dump_meta_data (bool, optional): Dump DICOM metadata to JSON file.
         custom_filename_format (str, optional): Custom filename format using DICOM tags.
             Example: "`0008|103e`-`1030|2003`" creates "PROTOCOL_NAME-TAG_VALUE" format.
@@ -558,6 +572,7 @@ def dicom2nii(folder: str,
                                      idlist=idlist,
                                      prefix=prefix,
                                      debug=debug,
+                                     regex_replace=regex_replace,
                                      dump_meta_data=dump_meta_data,
                                      custom_filename_format=custom_filename_format)
         converter.Execute()
