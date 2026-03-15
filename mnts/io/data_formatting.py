@@ -448,10 +448,10 @@ class Dcm2NiiConverter:
                 for k, im in _outimage.items():
                     if len(k) < 4:
                         outimage['-'.join(k)] = im
-                    if k[3] == "W":
+                    if re.match('(?i)(W|.*WATER)', k[3]) is not None:
                         # DIXON water image (fat-suppressed)
                         outimage['FS'] = im
-                    elif k[3] == "IP":
+                    elif re.match('(?i)(IP|.*IN_PHASE.*)', k[3]) is not None:
                         # DIXON regular image
                         outimage['IP'] = im
                     else:

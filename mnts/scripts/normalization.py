@@ -161,6 +161,8 @@ def run_graph_inference(raw_args=None):
     a = parser.parse_args(raw_args)
 
     MNTSLogger['run_graph_inference'].info(f"Recieved arguments: {a}")
+    if a.verbose:
+        MNTSLogger.set_global_log_level('debug')
 
     yaml_file = Path(a.file)
     assert yaml_file.is_file(), f"Cannot open yaml file at {yaml_file}"
