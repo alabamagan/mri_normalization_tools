@@ -9,7 +9,9 @@ from pathlib import Path
 
 __all__ = ['dicom2nii']
 
-def _str_to_dict(in_str):
+def _str_to_dict(in_str:str):
+    if in_str is None:
+        return None
     out = ast.literal_eval(in_str)
     assert type(out) == dict, f"Output eval from {in_str} is not a dictionary"
     return out
@@ -90,7 +92,7 @@ def dicom2nii(a, logger):
               help='Debug log messages')
 def console_entry(input_dir, output_dir, depth, idglobber, num_workers,
                   check_image_type_tag, dump_dicom_tags, debug, prefix,
-                  idlist, usefname, usepid, addtime, regex_replace,custom_filename_format, log, verbose):
+                  idlist, usefname, usepid, addtime, regex_replace,custom_filename_format, followlinks, log, verbose):
     """Convert DICOM files to NIfTI format."""
     # Create a namespace object similar to argparse.Namespace for compatibility
     from types import SimpleNamespace

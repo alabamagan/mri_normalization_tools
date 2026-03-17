@@ -3,11 +3,11 @@ from ..filters import MNTSFilterGraph, mpi_wrapper
 from ..mnts_logger import MNTSLogger
 
 from pathlib import Path
-from typing import Union, Sequence
+from typing import Union, Sequence, Optional
 from mnts.utils import repeat_zip
 import SimpleITK as sitk
 import argparse
-import tempfile
+import tempfile, rich
 
 __all__ = ['_train_normalization', '_inference_normalization', 'run_graph_train', 'run_graph_inference']
 
@@ -60,11 +60,13 @@ def _train_normalization(G: MNTSFilterGraph,
     return 0
 
 def _inference_normalization(G: MNTSFilterGraph,
-                             state_dir: Union[Path, str],
-                             input_dir: Union[Path, str],
-                             output_dir: Sequence[Union[Path, str]],
-                             num_worker=0,
-                             force_segment=False) -> None:
+                             state_dir     : Union[Path, str],
+                             input_dir     : Union[Path, str],
+                             output_dir    : Sequence[Union[Path, str]],
+                             num_worker    : Optional[int]               = 0,
+                             force_segment : Optional[bool]              = False,
+                             debug_mode    : Optional[bool]              = False) -> None :
+
     r"""
     Run inference of the trained network. For more see `_train_normalization`.
 
@@ -111,6 +113,9 @@ def _inference_normalization(G: MNTSFilterGraph,
             G.load_node_states(None, str(state_path))
 
         # Prepare arguments
+        if debug_mode:
+            images = images[:2]
+            out_names = out_names[:2]
         z = [out_names, [out_path], images]
         if num_worker > 1:
             mpi_wrapper(G.mpi_execute, z, num_worker=num_worker)
@@ -118,6 +123,7 @@ def _inference_normalization(G: MNTSFilterGraph,
             for row in repeat_zip(*z):
                 print(row)
             [G.mpi_execute(*row) for row in repeat_zip(*z)]
+
     return 0
 
 
@@ -151,7 +157,7 @@ def run_graph_train(raw_args=None):
     return 0
 
 def run_graph_inference(raw_args=None):
-    parser = MNTS_ConsoleEntry('ionvl')
+    parser = MNTS_ConsoleEntry('ionvdl')
     parser.add_argument('-s', '--state-dir', action='store', type=str,
                         help="Directory which holds the saved states.")
     parser.add_argument('-f', '--file', action='store', type=str,
@@ -161,7 +167,7 @@ def run_graph_inference(raw_args=None):
     a = parser.parse_args(raw_args)
 
     MNTSLogger['run_graph_inference'].info(f"Recieved arguments: {a}")
-    if a.verbose:
+    if a.debug:
         MNTSLogger.set_global_log_level('debug')
 
     yaml_file = Path(a.file)
@@ -170,11 +176,13 @@ def run_graph_inference(raw_args=None):
     log_save = Path(a.save_log).suffix == ".log"
     log_dir = a.save_log if log_save else None
     with MNTSLogger(log_dir, keep_file=False, verbose=a.verbose) as logger:
+        logger.debug(f"Erm: {yaml_file}")
         G = MNTSFilterGraph.CreateGraphFromYAML(yaml_file)
         _inference_normalization(G,
                                  a.state_dir,
                                  a.input,
                                  [a.output],
                                  a.numworker,
-                                 a.force_segment)
+                                 a.force_segment,
+                                 debug_mode=a.debug)
 
