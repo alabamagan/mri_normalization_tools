@@ -99,6 +99,14 @@ class RemoveShoulder(MNTSFilter):
         if image.GetOrigin() != mask.GetOrigin():
             self._logger.warning("Image and mask have different origin. Using image origin for output.")
 
+
+        # This function needs to account for the orientation when calculating where to crop
+        # Determine if the slicing axis is reversed relative to LPS
+        orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(image.GetDirection())
+        sitk_dim = 2 - self.dimension  # Map numpy dim (0,1,2) to SITK dim (2,1,0)
+        # In LPS, standard directions are L, P, S. If it's R, A, or I, it's reversed.
+        self._is_reversed = orientation[sitk_dim] in ['R', 'A', 'I']
+
         # Cache geometry
         self._image_spacing = image.GetSpacing()   # [sx, sy, sz]
         self._image_origin = image.GetOrigin()     # [ox, oy, oz]
@@ -174,13 +182,20 @@ class RemoveShoulder(MNTSFilter):
 
         min_threshold = max_area * self.min_area_threshold
 
-        # Barrier logic: count downwards from the end of the volume
+        # Barrier logic: account for orientation
         n = len(slice_areas)
         if self.barrier >= n:
             self._logger.warning(f"Barrier ({self.barrier}) >= number of slices ({n}), no valid indices.")
             return None
-        end_idx = n - int(self.barrier)  # count backwards from the end
-        candidate_indices = np.arange(0, end_idx)
+
+        if not getattr(self, '_is_reversed', False):
+            # Standard (LPS): barrier at the end (Superior is at max index)
+            end_idx = n - int(self.barrier)
+            candidate_indices = np.arange(0, end_idx)
+        else:
+            # Reversed: barrier at the start (Superior is at index 0)
+            start_idx = int(self.barrier)
+            candidate_indices = np.arange(start_idx, n)
 
         valid_mask = slice_areas[candidate_indices] >= min_threshold
         if not np.any(valid_mask):
@@ -241,6 +256,7 @@ class RemoveShoulder(MNTSFilter):
             lower_crop = [min_slice_idx, 0, 0]  # crop from start to min_slice_idx
             upper_crop = [0, 0, 0]  # don't crop from end (keep to top/max)
 
+        self._logger.debug(f"Cropping bound: {(lower_crop, upper_crop)}")
         return (lower_crop, upper_crop)
 
     def _crop_image(self, image: sitk.Image, crop_bounds: Tuple[list, list]) -> sitk.Image:
@@ -253,16 +269,13 @@ class RemoveShoulder(MNTSFilter):
         # Apply cropping in index space; spacing/direction preserved automatically.
         cropped_img = sitk.Crop(image, lower_crop, upper_crop)
 
-        # Update origin explicitly to match the shifted index start.
-        sx, sy, sz = image.GetSpacing()
-        ox, oy, oz = image.GetOrigin()
-        new_origin = [
-            ox + lower_crop[0] * sx,  # x offset
-            oy + lower_crop[1] * sy,  # y offset
-            oz + lower_crop[2] * sz,  # z offset
-        ]
-        cropped_img.SetOrigin(new_origin)
+        # # Update origin explicitly to match the shifted index start.
+        # sx, sy, sz = image.GetSpacing()
+        # ox, oy, oz = image.GetOrigin()
+        # new_origin = [
+        #     ox + lower_crop[0] * sx,  # x offset
+        #     oy + lower_crop[1] * sy,  # y offset
+        #     oz + lower_crop[2] * sz,  # z offset
+        # ]
+        # cropped_img.SetOrigin(new_origin)
         return cropped_img
-
-# ... rest of code ...
-
