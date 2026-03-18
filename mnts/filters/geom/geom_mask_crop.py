@@ -14,8 +14,10 @@ class RemoveShoulder(MNTSFilter):
     then crops the 3D volume to a single slice along that dimension.
 
     This filter finds the slice with the smallest mask area along the specified dimension and
-    reduces the 3D volume to just that single slice. The search starts from the end of the volume
-    and works backwards by the barrier amount to avoid unwanted regions like shoulder areas.
+    reduces the 3D volume to just that single slice. The search of slice is done from inferior to superior
+    for identifying the shoulder. To prevent top slices (top of the head) to be accidentedly selected, a
+    barrier setting is implement that protects the top n slices from being selected.
+
 
     The filter only crops along the specified dimension, leaving the other two dimensions at full size.
     This is useful for extracting representative slices for analysis or preprocessing.
@@ -30,11 +32,6 @@ class RemoveShoulder(MNTSFilter):
             The search starts from the end of the volume and works backwards by this many slices.
             Default is 10 slices.
 
-        dimension (int):
-            The dimension along which to calculate slice areas and perform cropping.
-            0 for axial (z-axis), 1 for coronal (y-axis), 2 for sagittal (x-axis).
-            Default is 0 (axial).
-
     Example:
         >>> from mnts.filters.geom import RemoveShoulder
         >>> crop_filter = RemoveShoulder(barrier=15, dimension=0)
@@ -43,12 +40,11 @@ class RemoveShoulder(MNTSFilter):
 
     def __init__(self,
                   min_area_threshold: float = 0.1,
-                  barrier: int = 10,
-                  dimension: int = 0):
+                  barrier: int = 10):
         super(RemoveShoulder, self).__init__()
         self.min_area_threshold = min_area_threshold
         self.barrier = barrier
-        self.dimension = dimension
+        self.dimension = 0 # This is now fixed
 
     @property
     def min_area_threshold(self):
@@ -68,16 +64,6 @@ class RemoveShoulder(MNTSFilter):
     def barrier(self, val: float):
         assert 0 <= val
         self._barrier = val
-
-    @property
-    def dimension(self):
-        return self._dimension
-
-    @dimension.setter
-    def dimension(self, val: int):
-        if not 0 <= val <= 2:
-            raise ValueError("Dimension must be 0, 1, or 2")
-        self._dimension = val
         
     def filter(self,
                image: Union[str, Path, sitk.Image],
@@ -99,18 +85,25 @@ class RemoveShoulder(MNTSFilter):
         if image.GetOrigin() != mask.GetOrigin():
             self._logger.warning("Image and mask have different origin. Using image origin for output.")
 
-
-        # This function needs to account for the orientation when calculating where to crop
-        # Determine if the slicing axis is reversed relative to LPS
-        orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(image.GetDirection())
-        sitk_dim = 2 - self.dimension  # Map numpy dim (0,1,2) to SITK dim (2,1,0)
-        # In LPS, standard directions are L, P, S. If it's R, A, or I, it's reversed.
-        self._is_reversed = orientation[sitk_dim] in ['R', 'A', 'I']
-
         # Cache geometry
         self._image_spacing = image.GetSpacing()   # [sx, sy, sz]
         self._image_origin = image.GetOrigin()     # [ox, oy, oz]
         self._image_direction = image.GetDirection()  # 3x3 flattened
+
+        # Determine orientation for the specified dimension
+        orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(image.GetDirection())
+        # Map dimension to orientation string index (dimension 0->z->2, 1->y->1, 2->x->0)
+        orient_idx = 2 - self.dimension
+        axis_orientation = orientation[orient_idx]
+
+        # Determine if Superior is at high or low index
+        # For anatomy: S (Superior) should be at high index in standard orientation
+        # If axis is I (Inferior), then Superior is at low index (reversed)
+        self._is_reversed = axis_orientation == 'I' if self.dimension == 0 else \
+                            axis_orientation == 'A' if self.dimension == 1 else \
+                            axis_orientation == 'L'
+
+        self._logger.info(f"Orientation: {orientation}, Dimension {self.dimension} axis: {axis_orientation}, Reversed: {self._is_reversed}")
 
         mask_array = sitk.GetArrayFromImage(mask)  # numpy order [z, y, x]
         if mask_array.ndim != 3:
@@ -121,7 +114,7 @@ class RemoveShoulder(MNTSFilter):
         slice_areas = self._calculate_slice_areas(mask_array)
         if slice_areas.size == 0 or np.all(slice_areas == 0):
             raise ValueError("All slice areas are zero; cannot determine cropping slice.")
-        self._logger.info(f"slice areas: {slice_areas}")
+        self._logger.info(f"Slice areas: {slice_areas}")
 
         min_slice_idx = self._find_minimum_area_slice(slice_areas)
         if min_slice_idx is None:
@@ -139,17 +132,15 @@ class RemoveShoulder(MNTSFilter):
         numpy array is [z, y, x]; dimension: 0=z, 1=y, 2=x
         """
         # Spacing in SITK is [sx, sy, sz]; array dims are [z, y, x]
-        sx, sy, sz = self._image_spacing if hasattr(self, '_image_spacing') else (1.0, 1.0, 1.0)
+        sx, sy, sz = self._image_spacing
 
         # Pixel area is the product of the spacings in the two axes orthogonal to the slicing axis
         if self.dimension == 0:      # slicing along z => area in y-x plane
             pixel_area = sy * sx
         elif self.dimension == 1:    # slicing along y => area in z-x plane
             pixel_area = sz * sx
-        elif self.dimension == 2:    # slicing along x => area in z-y plane
+        else:                         # slicing along x => area in z-y plane
             pixel_area = sz * sy
-        else:
-            raise ValueError(f"Invalid dimension {self.dimension}")
 
         num_slices = mask_array.shape[self.dimension]
         areas = np.zeros(num_slices, dtype=np.float64)
@@ -163,14 +154,16 @@ class RemoveShoulder(MNTSFilter):
                 slice_data = mask_array[:, :, i]     # [z, y]
             areas[i] = np.count_nonzero(slice_data) * pixel_area
 
-        # Replace 0 with max value to ignore empty slices.
-        areas[areas == 0] = areas.max()
-        self._logger.debug(f"{areas = }")
+        # Replace 0 with max value to ignore empty slices
+        max_area = areas.max() if areas.max() > 0 else 1.0
+        areas[areas == 0] = max_area
+        self._logger.debug(f"Calculated areas: {areas}")
         return areas
 
     def _find_minimum_area_slice(self, slice_areas: np.ndarray) -> Optional[int]:
         """
         Apply threshold and barrier to find minimal area slice index.
+        Barrier is applied from the Superior end (where shoulders typically are).
         """
         if slice_areas.size == 0:
             return None
@@ -182,20 +175,27 @@ class RemoveShoulder(MNTSFilter):
 
         min_threshold = max_area * self.min_area_threshold
 
-        # Barrier logic: account for orientation
+        # Determine Superior end based on orientation
         n = len(slice_areas)
         if self.barrier >= n:
             self._logger.warning(f"Barrier ({self.barrier}) >= number of slices ({n}), no valid indices.")
             return None
 
-        if not getattr(self, '_is_reversed', False):
-            # Standard (LPS): barrier at the end (Superior is at max index)
-            end_idx = n - int(self.barrier)
-            candidate_indices = np.arange(0, end_idx)
+        # Superior (where head are) determination:
+        # If NOT reversed: Superior is at high index (end of array), crop from low index
+        # If reversed: Superior is at low index (start of array), crop from high index
+        if not self._is_reversed:
+            # S -> Superior at high index, apply barrier from end
+            superior_barrier_idx = n - int(self.barrier)
+            candidate_indices = np.arange(0, superior_barrier_idx)
         else:
-            # Reversed: barrier at the start (Superior is at index 0)
-            start_idx = int(self.barrier)
-            candidate_indices = np.arange(start_idx, n)
+            # I -> Superior at low index, apply barrier from start
+            superior_barrier_idx = int(self.barrier)
+            candidate_indices = np.arange(superior_barrier_idx, n)
+
+        if len(candidate_indices) == 0:
+            self._logger.warning("No candidate indices after applying barrier.")
+            return None
 
         valid_mask = slice_areas[candidate_indices] >= min_threshold
         if not np.any(valid_mask):
@@ -208,74 +208,63 @@ class RemoveShoulder(MNTSFilter):
 
         self._logger.info(
             f"Found minimum area slice at index {min_slice_idx} "
-            f"(area={slice_areas[min_slice_idx]:.3f}, max={max_area:.3f}, barrier={self.barrier})"
+            f"(area={slice_areas[min_slice_idx]:.3f}, max={max_area:.3f}, barrier={self.barrier}, reversed={self._is_reversed})"
         )
         return min_slice_idx
 
     def _get_cropping_bounds(self, mask_array: np.ndarray, min_slice_idx: int) -> Tuple[list, list]:
         """
         Build crop bounds as (lower_crop, upper_crop) for SimpleITK.Crop().
-        Crops from top (max index in LPS convention) to the minimum area slice.
+        Crops from Superior (shoulder side) to the minimum area slice.
 
         Returns:
-            Tuple of (lower_crop, upper_crop) where each is a list [x, y, z] of integers
-            representing the number of pixels to crop from start and end respectively.
-        
-        Note: mask_array is in numpy order [z, y, x] but SimpleITK uses [x, y, z]
-        dimension 0 = z-axis (numpy index 0), dimension 1 = y-axis (numpy index 1), dimension 2 = x-axis (numpy index 2)
-        In LPS convention, top (superior) corresponds to max index.
+            Tuple of (lower_crop, upper_crop) where each is a list [x, y, z] of integers.
         """
-        # Step 1: Extract the 2D slice along the chosen dimension (for validation only)
-        if self.dimension == 0:      # Axial: extract slice at z=min_slice_idx, result shape [y, x]
+        # Validate the selected slice has mask content
+        if self.dimension == 0:
             min_slice = mask_array[min_slice_idx, :, :]
-        elif self.dimension == 1:    # Coronal: extract slice at y=min_slice_idx, result shape [z, x]
+        elif self.dimension == 1:
             min_slice = mask_array[:, min_slice_idx, :]
-        else:                        # Sagittal: extract slice at x=min_slice_idx, result shape [z, y]
+        else:
             min_slice = mask_array[:, :, min_slice_idx]
 
-        # Step 2: Validate that the selected slice has some mask content
         if np.count_nonzero(min_slice) == 0:
             raise ValueError(f"No mask pixels found in slice {min_slice_idx}")
 
-        # Step 3: Calculate crop parameters for SimpleITK.Crop()
-        # Crop from top (max index) to min_slice_idx (inclusive)
-        # SimpleITK expects [x, y, z] order for crop parameters
+        # Calculate crop bounds in SimpleITK order [x, y, z]
         # mask_array.shape is [z, y, x] in numpy order
-        
-        if self.dimension == 0:
-            # Dimension 0 (z-axis): crop from top (max z) to min_slice_idx
-            # Keep from min_slice_idx to max index (top)
-            lower_crop = [0, 0, min_slice_idx]  # crop from start to min_slice_idx
-            upper_crop = [0, 0, 0]  # don't crop from end (keep to top/max)
-        elif self.dimension == 1:
-            # Dimension 1 (y-axis): crop from top (max y) to min_slice_idx
-            lower_crop = [0, min_slice_idx, 0]  # crop from start to min_slice_idx
-            upper_crop = [0, 0, 0]  # don't crop from end (keep to top/max)
-        else:  # dimension == 2
-            # Dimension 2 (x-axis): crop from top (max x) to min_slice_idx
-            lower_crop = [min_slice_idx, 0, 0]  # crop from start to min_slice_idx
-            upper_crop = [0, 0, 0]  # don't crop from end (keep to top/max)
+        n_slices = mask_array.shape[self.dimension]
 
-        self._logger.debug(f"Cropping bound: {(lower_crop, upper_crop)}")
+        # Determine which end to crop from based on orientation
+        if not self._is_reversed:
+            # S -> Superior at high index: crop from low index up to min_slice_idx
+            # Keep slices [min_slice_idx, end], remove [0, min_slice_idx-1]
+            crop_from_start = min_slice_idx
+            crop_from_end = 0
+        else:
+            # I -> Superior at low index: crop from high (inferior) index down to min_slice_idx
+            # Keep slices [0, min_slice_idx], remove [min_slice_idx+1, end]
+            crop_from_end = n_slices - min_slice_idx - 1
+            crop_from_start = 0
+
+        # Build crop parameters in SimpleITK order [x, y, z]
+        if self.dimension == 0:  # z-axis
+            lower_crop = [0, 0, crop_from_start]
+            upper_crop = [0, 0, crop_from_end]
+        elif self.dimension == 1:  # y-axis
+            lower_crop = [0, crop_from_start, 0]
+            upper_crop = [0, crop_from_end, 0]
+        else:  # x-axis
+            lower_crop = [crop_from_start, 0, 0]
+            upper_crop = [crop_from_end, 0, 0]
+
+        self._logger.debug(f"Cropping bounds: lower={lower_crop}, upper={upper_crop} (keeping slice {min_slice_idx})")
         return (lower_crop, upper_crop)
 
     def _crop_image(self, image: sitk.Image, crop_bounds: Tuple[list, list]) -> sitk.Image:
         """
-        Crop using SimpleITK Crop with lower and upper crop parameters and update origin.
+        Crop using SimpleITK Crop with lower and upper crop parameters.
         """
-        # Expecting crop_bounds as (lower_crop, upper_crop) from _get_cropping_bounds
         lower_crop, upper_crop = crop_bounds
-
-        # Apply cropping in index space; spacing/direction preserved automatically.
         cropped_img = sitk.Crop(image, lower_crop, upper_crop)
-
-        # # Update origin explicitly to match the shifted index start.
-        # sx, sy, sz = image.GetSpacing()
-        # ox, oy, oz = image.GetOrigin()
-        # new_origin = [
-        #     ox + lower_crop[0] * sx,  # x offset
-        #     oy + lower_crop[1] * sy,  # y offset
-        #     oz + lower_crop[2] * sz,  # z offset
-        # ]
-        # cropped_img.SetOrigin(new_origin)
         return cropped_img
