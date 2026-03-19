@@ -664,6 +664,8 @@ def pydicom_read_series(dcmdir: Path, progress_bar: bool = False) -> Dict[str, L
     for ff in tqdm(files, disable=not progress_bar):
         try:
             dcmlist.append((ff, pydicom.dcmread(ff, specific_tags=[pydicom.tag.Tag(0x0020,0x000e)])))
+        except AttributeError:
+            dcmlist.append((ff, pydicom.read_file(ff, specific_tags=[pydicom.tag.Tag(0x0020, 0x000e)])))
         except pydicom.errors.InvalidDicomError:
             # don't add to list if can't read it
             pass
