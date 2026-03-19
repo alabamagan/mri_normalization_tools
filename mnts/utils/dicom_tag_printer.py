@@ -10,12 +10,12 @@ Author: MRI Normalization Tools
 """
 
 import os
-import sys
 import re
 from pathlib import Path
 from typing import List, Dict, Union, Optional
-import warnings
 from collections import defaultdict
+from rich.table import Table
+from rich.logging import RichHandler
 
 try:
     import click
@@ -25,6 +25,7 @@ except ImportError:
 
 try:
     import pydicom
+    from pydicom.datadict import dictionary_description
     PYDICOM_AVAILABLE = True
 except ImportError:
     PYDICOM_AVAILABLE = False
@@ -39,7 +40,7 @@ from ..mnts_logger import MNTSLogger
 from .preprocessing import recursive_list_dir
 from ..io.data_formatting import pydicom_read_series
 
-__all__ = ['DicomTagPrinter', 'print_dicom_tags', 'console_entry']
+__all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format']
 
 
 class DicomTagPrinter:
@@ -90,25 +91,30 @@ class DicomTagPrinter:
         try:
             ds = pydicom.dcmread(file_path, force=True)
             result = {}
-            
+
             for tag_str in tags:
                 try:
                     # Parse tag format "0008|103e"
                     group, element = tag_str.split('|')
                     tag = pydicom.tag.Tag(int(group, 16), int(element, 16))
-                    
+                    try:
+                        # try to get the tag entity
+                        tag_str = dictionary_description(tag)
+                    except:
+                        pass
+
                     if tag in ds:
                         value = str(ds[tag].value).strip()
                         result[tag_str] = value
                     else:
                         result[tag_str] = 'Missing'
-                        
+
                 except Exception as e:
                     self.logger.warning(f"Cannot read tag {tag_str}: {e}")
                     result[tag_str] = 'Error'
-                    
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Cannot read DICOM file {file_path}: {e}")
             return {tag: 'Error' for tag in tags}
@@ -128,7 +134,7 @@ class DicomTagPrinter:
             reader.SetFileName(str(file_path))
             reader.LoadPrivateTagsOn()
             reader.ReadImageInformation()
-            
+
             result = {}
             for tag_str in tags:
                 try:
@@ -140,9 +146,9 @@ class DicomTagPrinter:
                 except Exception as e:
                     self.logger.warning(f"Cannot read tag {tag_str}: {e}")
                     result[tag_str] = 'Error'
-                    
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Cannot read DICOM file {file_path}: {e}")
             return {tag: 'Error' for tag in tags}
@@ -370,59 +376,57 @@ class DicomTagPrinter:
             raise ValueError(f"Unsupported output format: {output_format}")
 
     def _print_table(self, results: List[Dict], tags: List[str], group_by_series: bool) -> None:
-        """Print results in table format"""
+        """Print results in table format using rich"""
         if not results:
-            print("No results to display")
+            self.console.print("[yellow]No results to display[/yellow]")
             return
-            
-        # Calculate column widths
+
+        # Create rich table
+        table = Table(show_header=True, header_style="bold magenta", show_lines=True)
+
         if group_by_series:
-            headers = ['Series UID', 'File Count', 'Representative File'] + [f'Tag {tag}' for tag in tags]
-            rows = []
+            # Add columns for series view
+            table.add_column("Series UID", style="cyan", no_wrap=False, max_width=30)
+            table.add_column("File Count", style="green", justify="right")
+            table.add_column("Representative File", style="blue", no_wrap=False, max_width=40)
+
+            tags = results[0].keys()
+            for tag in tags:
+                table.add_column(f"{tag}", style="yellow", no_wrap=False)
+
+            # Add rows
             for result in results:
                 row = [
-                    result['SeriesUID'][:20] + '...' if len(result['SeriesUID']) > 20 else result['SeriesUID'],
+                    result['SeriesUID'],
                     str(result['FileCount']),
                     result['RepresentativeFile']
-                ] + [result.get(tag, 'N/A') for tag in tags]
-                rows.append(row)
+                ] + [str(result.get(tag, 'N/A')) for tag in tags]
+                table.add_row(*row)
         else:
-            headers = ['File Path'] + [f'Tag {tag}' for tag in tags]
-            rows = []
+            # Add columns for file view
+            table.add_column("File Path", style="cyan", no_wrap=False, max_width=50)
+
+            for tag in result.keys():
+                table.add_column(f"{tag}", style="yellow", no_wrap=False)
+
+            # Add rows
             for result in results:
                 row = [result['FilePath']] + [result.get(tag, 'N/A') for tag in tags]
-                rows.append(row)
-        
-        # Calculate column widths
-        col_widths = []
-        for i, header in enumerate(headers):
-            max_width = len(header)
-            for row in rows:
-                if i < len(row):
-                    max_width = max(max_width, len(str(row[i])))
-            col_widths.append(min(max_width + 2, 50))  # Max width limit of 50
-        
-        # Print header
-        print()
-        print("=" * sum(col_widths))
-        header_row = ""
-        for i, (header, width) in enumerate(zip(headers, col_widths)):
-            header_row += header.ljust(width)
-        print(header_row)
-        print("=" * sum(col_widths))
-        
-        # Print data
-        for row in rows:
-            data_row = ""
-            for i, (data, width) in enumerate(zip(row, col_widths)):
-                data_str = str(data)
-                if len(data_str) > width - 2:
-                    data_str = data_str[:width-5] + '...'
-                data_row += data_str.ljust(width)
-            print(data_row)
-        
-        print("=" * sum(col_widths))
-        print(f"Total: {len(results)} {'series' if group_by_series else 'files'}")
+                table.add_row(*row)
+
+        # Get the rich handler's console from logger if available
+        rich_handler = next((h for h in self.logger._logger.handlers if isinstance(h, RichHandler)), None)
+
+        if rich_handler:
+            console = rich_handler.console
+        else:
+            # Fallback to default console
+            console = Console()
+
+        # Print table with summary
+        console.print()
+        console.print(table)
+        console.print(f"\n[bold green]Total: {len(results)} {'series' if group_by_series else 'files'}[/bold green]")
 
     def _print_csv(self, results: List[Dict], tags: List[str], group_by_series: bool) -> None:
         """Print results in CSV format"""
@@ -471,145 +475,6 @@ def validate_tag_format(ctx, param, value):
     """Validate DICOM tag format"""
     if value:
         for tag in value:
-            if not re.match(r'^[0-9a-fA-F]{4}\|[0-9a-fA-F]{4}$', tag):
+            if not re.match(r'^[0-9a-fA-F]{4}\|[0-9a-fA-F]{4}$', tag) and not tag == 'default':
                 raise click.BadParameter(f"Invalid tag format: {tag}. Format should be XXXX|XXXX (e.g., 0008|103e)")
     return value
-
-
-@click.command()
-@click.argument(
-    'input_path',
-    type=click.Path(exists=True, path_type=Path),
-    required=True
-)
-@click.option(
-    '-t', '--tags',
-    type=str,
-    multiple=True,
-    required=True,
-    callback=validate_tag_format,
-    help='DICOM tags to print (format: 0008|103e). Can specify multiple tags.'
-)
-@click.option(
-    '--recursive/--no-recursive',
-    default=True,
-    help='Recursively search subdirectories (default: enabled)'
-)
-@click.option(
-    '--group-by-series/--no-group-by-series',
-    default=True,
-    help='Group by series (default: enabled)'
-)
-@click.option(
-    '-f', '--format',
-    type=click.Choice(['table', 'csv', 'json']),
-    default='table',
-    help='Output format (default: table)'
-)
-@click.option(
-    '-b', '--backend',
-    type=click.Choice(['auto', 'pydicom', 'sitk']),
-    default='auto',
-    help='DICOM reading backend (default: auto)'
-)
-@click.option(
-    '-d', '--max-depth',
-    type=int,
-    default=10,
-    help='Maximum search depth (default: 10)'
-)
-@click.option(
-    '--verbose', '-v',
-    is_flag=True,
-    help='Show verbose information'
-)
-def dicom_tag_printer_cli(
-    input_path: Path,
-    tags: tuple,
-    recursive: bool,
-    group_by_series: bool,
-    format: str,
-    backend: str,
-    max_depth: int,
-    verbose: bool
-):
-    """
-    DICOM Tag Printer - Print specific tag information from DICOM files.
-    
-    This tool reads DICOM files or directories and prints specific DICOM tag information
-    for all sequences. Supports single files, recursive directory search, and batch processing
-    of multiple tags.
-    
-    \b
-    Common DICOM Tags:
-      0008|103e  - Series Description
-      0010|0020  - Patient ID
-      0020|0011  - Series Number
-      0008|0020  - Study Date
-      0020|000e  - Series Instance UID
-      0008|0060  - Modality
-      0018|0050  - Slice Thickness
-    
-    \b
-    Examples:
-      # Print series description from single file
-      dicom-tag-printer image.dcm -t 0008|103e
-      
-      # Print patient ID and series description from all series in directory
-      dicom-tag-printer /path/to/dicom -t 0010|0020 -t 0008|103e
-      
-      # Output in CSV format
-      dicom-tag-printer /path/to/dicom -t 0008|103e -f csv
-    """
-    
-    # Set log level
-    if verbose:
-        MNTSLogger.set_global_log_level('debug')
-    
-    # Print configuration if verbose
-    if verbose:
-        click.echo("Configuration:")
-        click.echo(f"  Input path: {input_path.absolute()}")
-        click.echo(f"  Tags: {', '.join(tags)}")
-        click.echo(f"  Recursive: {recursive}")
-        click.echo(f"  Group by series: {group_by_series}")
-        click.echo(f"  Output format: {format}")
-        click.echo(f"  Backend: {backend}")
-        click.echo(f"  Max depth: {max_depth}")
-        click.echo()
-    
-    try:
-        # Create printer and execute
-        printer = DicomTagPrinter(backend=backend)
-        printer.print_tags(
-            input_path=input_path,
-            tags=list(tags),
-            recursive=recursive,
-            group_by_series=group_by_series,
-            output_format=format,
-            max_depth=max_depth
-        )
-        
-    except KeyboardInterrupt:
-        click.echo("\nOperation interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
-
-
-def console_entry():
-    """Console entry point for setuptools"""
-    if not CLICK_AVAILABLE:
-        print("Error: click library is required but not installed")
-        print("Please install it with: pip install click")
-        sys.exit(1)
-    
-    dicom_tag_printer_cli()
-
-
-if __name__ == '__main__':
-    console_entry()
