@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Union, Optional
 from collections import defaultdict
+from rich.console import Console
 from rich.table import Table
 from rich.logging import RichHandler
 
@@ -391,7 +392,6 @@ class DicomTagPrinter:
             table.add_column("File Count", style="green", justify="right")
             table.add_column("Representative File", style="blue", no_wrap=False, max_width=40)
 
-            tags = results[0].keys()
             for tag in tags:
                 table.add_column(f"{tag}", style="yellow", no_wrap=False)
 
@@ -407,12 +407,12 @@ class DicomTagPrinter:
             # Add columns for file view
             table.add_column("File Path", style="cyan", no_wrap=False, max_width=50)
 
-            for tag in result.keys():
+            for tag in tags:
                 table.add_column(f"{tag}", style="yellow", no_wrap=False)
 
             # Add rows
             for result in results:
-                row = [result['FilePath']] + [result.get(tag, 'N/A') for tag in tags]
+                row = [result['FilePath']] + [str(result.get(tag, 'N/A')) for tag in tags]
                 table.add_row(*row)
 
         # Get the rich handler's console from logger if available
