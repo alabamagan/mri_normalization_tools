@@ -13,11 +13,20 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union, Optional, TYPE_CHECKING
 from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
 from rich.logging import RichHandler
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
 
 try:
     import click
@@ -47,18 +56,18 @@ __all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format', 'print_
 
 class DicomTagPrinter:
     """DICOM Tag Printer Class
-    
+
     This class provides functionality to read DICOM files and print specific tags.
     Supports both pydicom and SimpleITK as backend engines.
-    
+
     Args:
         backend (str): Backend engine to use, 'pydicom' or 'sitk' or 'auto'
         logger: Logger instance for logging information
     """
-    
+
     def __init__(self, backend: str = 'auto', logger=None):
         self.logger = logger or MNTSLogger['DicomTagPrinter']
-        
+
         # Select backend
         if backend == 'auto':
             if PYDICOM_AVAILABLE:
@@ -77,16 +86,16 @@ class DicomTagPrinter:
             self.backend = 'sitk'
         else:
             raise ValueError(f"Unsupported backend: {backend}")
-            
+
         self.logger.info(f"Using backend: {self.backend}")
 
     def read_dicom_tag_pydicom(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
         """Read DICOM tags using pydicom
-        
+
         Args:
             file_path: DICOM file path
             tags: List of tags to read, format: ['0008|103e', '0010|0020']
-            
+
         Returns:
             Dictionary containing tag values
         """
@@ -123,11 +132,11 @@ class DicomTagPrinter:
 
     def read_dicom_tag_sitk(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
         """Read DICOM tags using SimpleITK
-        
+
         Args:
             file_path: DICOM file path
             tags: List of tags to read, format: ['0008|103e', '0010|0020']
-            
+
         Returns:
             Dictionary containing tag values
         """
@@ -157,11 +166,11 @@ class DicomTagPrinter:
 
     def read_dicom_tags(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
         """Read DICOM tags (unified interface)
-        
+
         Args:
             file_path: DICOM file path
             tags: List of tags to read
-            
+
         Returns:
             Dictionary containing tag values
         """
@@ -170,21 +179,21 @@ class DicomTagPrinter:
         else:
             return self.read_dicom_tag_sitk(file_path, tags)
 
-    def find_dicom_files(self, input_path: Union[str, Path], recursive: bool = True, 
+    def find_dicom_files(self, input_path: Union[str, Path], recursive: bool = True,
                         max_depth: int = 10) -> List[Path]:
         """Find DICOM files
-        
+
         Args:
             input_path: Input path (file or directory)
             recursive: Whether to search recursively
             max_depth: Maximum search depth
-            
+
         Returns:
             List of DICOM file paths
         """
         input_path = Path(input_path)
         dicom_files = []
-        
+
         if input_path.is_file():
             # Single file
             if self.is_dicom_file(input_path):
@@ -210,15 +219,15 @@ class DicomTagPrinter:
                 for file_path in input_path.iterdir():
                     if file_path.is_file() and self.is_dicom_file(file_path):
                         dicom_files.append(file_path)
-        
+
         return sorted(dicom_files)
 
     def is_dicom_file(self, file_path: Path) -> bool:
         """Check if file is DICOM format
-        
+
         Args:
             file_path: File path
-            
+
         Returns:
             Whether file is DICOM
         """
@@ -226,7 +235,7 @@ class DicomTagPrinter:
             # First check file extension
             if file_path.suffix.lower() in ['.dcm', '.dicom']:
                 return True
-                
+
             # Try to read DICOM header
             if self.backend == 'pydicom' and PYDICOM_AVAILABLE:
                 try:
@@ -244,15 +253,15 @@ class DicomTagPrinter:
                     return False
         except:
             pass
-            
+
         return False
 
     def group_by_series(self, dicom_files: List[Path]) -> Dict[str, List[Path]]:
         """Group DICOM files by series
-        
+
         Args:
             dicom_files: List of DICOM files
-            
+
         Returns:
             Dictionary of file groups keyed by series UID
         """
@@ -264,7 +273,7 @@ class DicomTagPrinter:
                     # Get common directory
                     common_dir = Path(os.path.commonpath([str(f.parent) for f in dicom_files]))
                     series_dict = pydicom_read_series(common_dir, progress_bar=False)
-                    
+
                     # Filter to only include files in our list
                     filtered_dict = {}
                     file_set = set(dicom_files)
@@ -272,14 +281,14 @@ class DicomTagPrinter:
                         filtered_files = [f for f in files if f in file_set]
                         if filtered_files:
                             filtered_dict[series_uid] = filtered_files
-                    
+
                     return filtered_dict
             except Exception as e:
                 self.logger.warning(f"Failed to use pydicom_read_series, using fallback: {e}")
-        
+
         # Fallback method
         series_groups = defaultdict(list)
-        
+
         for file_path in dicom_files:
             try:
                 # Try to get series instance UID
@@ -291,20 +300,109 @@ class DicomTagPrinter:
                     reader.SetFileName(str(file_path))
                     reader.ReadImageInformation()
                     series_uid = reader.GetMetaData('0020|000e') if reader.HasMetaDataKey('0020|000e') else 'Unknown'
-                
+
                 series_groups[series_uid].append(file_path)
-                
+
             except Exception as e:
                 self.logger.warning(f"Cannot read series UID from {file_path}: {e}")
                 series_groups['Unknown'].append(file_path)
-        
+
         return dict(series_groups)
+
+    def _aggregate_series_tags(self, files: List[Path], tags: List[str]) -> Dict[str, str]:
+        """Read all files in a series and aggregate numeric tag values as ranges.
+
+        For each tag:
+        - If all valid values are identical, the single value is shown.
+        - If all valid values are numeric (int or float), the range is shown as
+          ``"min~max"`` (e.g. ``"1~30"``).
+        - Otherwise the representative (first) file's value is used.
+
+        Args:
+            files: All files belonging to a single series.
+            tags: Tags to read.
+
+        Returns:
+            Dict mapping each tag name to its aggregated value string.
+        """
+        all_values: Dict[str, List[str]] = defaultdict(list)
+        for file_path in files:
+            tag_values = self.read_dicom_tags(file_path, tags)
+            for tag, value in tag_values.items():
+                all_values[tag].append(value)
+
+        result: Dict[str, str] = {}
+        for tag in tags:
+            values = all_values.get(tag, [])
+            valid = [v for v in values if v not in ('Missing', 'Error')]
+
+            if not valid:
+                result[tag] = values[0] if values else 'Missing'
+                continue
+
+            # All identical — show the single value
+            if len(set(valid)) == 1:
+                result[tag] = valid[0]
+                continue
+
+            # Attempt numeric range summarisation
+            try:
+                numbers = [float(v) for v in valid]
+                lo, hi = min(numbers), max(numbers)
+
+                def _fmt(n: float) -> str:
+                    return str(int(n)) if n == int(n) else str(n)
+
+                result[tag] = f"{_fmt(lo)}~{_fmt(hi)}"
+            except (ValueError, TypeError):
+                # Non-numeric mixed values — fall back to the representative value
+                result[tag] = valid[0]
+
+        return result
+
+    def build_dataframe(self, results: List[Dict], tags: List[str],
+                        group_by_series: bool) -> 'pd.DataFrame':
+        """Build a unified DataFrame from tag results.
+
+        This is the single source of truth for column structure and ordering used
+        by all output methods (table, CSV, JSON).  Index columns (path / series
+        metadata) come first, followed by the tag columns in the order given by
+        *tags*.
+
+        Args:
+            results: List of result dicts produced by :meth:`print_tags` or
+                :meth:`print_tags_from_json`.
+            tags: Ordered list of tag column names.  May include ``'SubjectID'``
+                when an *id_globber* was applied.
+            group_by_series: When ``True`` the index columns are
+                ``SeriesUID``, ``FileCount``, and ``RepresentativeFile``;
+                otherwise only ``FilePath``.
+
+        Returns:
+            :class:`pandas.DataFrame` with index columns first, followed by tag
+            columns.  Missing values are filled with ``'N/A'``.
+        """
+        if not PANDAS_AVAILABLE:
+            raise ImportError("pandas is required for build_dataframe. Install it with: pip install pandas")
+
+        index_cols = (
+            ['SeriesUID', 'FileCount', 'RepresentativeFile']
+            if group_by_series
+            else ['FilePath']
+        )
+        # Avoid duplicating index columns if they were somehow included in tags
+        tag_cols = [t for t in tags if t not in index_cols]
+        all_cols = index_cols + tag_cols
+
+        rows = [{col: result.get(col, 'N/A') for col in all_cols} for result in results]
+        return pd.DataFrame(rows, columns=all_cols)
 
     def print_tags(self, input_path: Union[str, Path], tags: List[str],
                    recursive: bool = True, group_by_series: bool = True,
                    output_format: str = 'table', max_depth: int = 10,
-                   id_globber: Optional[str] = None) -> None:
-        """Print DICOM tag information
+                   id_globber: Optional[str] = None,
+                   summarize_numeric: bool = False) -> None:
+        """Print DICOM tag information.
 
         Args:
             input_path: Input path
@@ -318,6 +416,11 @@ class DicomTagPrinter:
                 prepended to the output table derived by applying the pattern to
                 the representative file path (series view) or each file path
                 (file view).
+            summarize_numeric: When ``True`` and *group_by_series* is also
+                ``True``, all files in each series are read and numeric tags are
+                summarised as ``"min~max"`` ranges instead of only showing the
+                representative file's value.  Disabled by default because it
+                requires reading every file in the series.
         """
         self.logger.info(f"Processing: {input_path}")
         self.logger.info(f"Tags to read: {tags}")
@@ -341,13 +444,15 @@ class DicomTagPrinter:
             self.logger.info(f"Found {len(series_groups)} series")
 
             for series_uid, files in series_groups.items():
-                representative_file = files[0]
-                tag_values = self.read_dicom_tags(representative_file, tags)
+                if summarize_numeric and len(files) > 1:
+                    tag_values = self._aggregate_series_tags(files, tags)
+                else:
+                    tag_values = self.read_dicom_tags(files[0], tags)
 
                 result = {
                     'SeriesUID': series_uid,
                     'FileCount': len(files),
-                    'RepresentativeFile': str(representative_file),
+                    'RepresentativeFile': str(files[0]),
                     **tag_values
                 }
                 results.append(result)
@@ -365,109 +470,119 @@ class DicomTagPrinter:
             display_tags = self._inject_subject_id(results, id_globber,
                                                     group_by_series, display_tags)
 
-        # Output results
-        self._print_results(results, display_tags, output_format, group_by_series)
+        # Build unified DataFrame and output results
+        df = self.build_dataframe(results, display_tags, group_by_series)
+        self._print_results(df, output_format, group_by_series)
 
-    def _print_results(self, results: List[Dict], tags: List[str], 
-                      output_format: str, group_by_series: bool) -> None:
-        """Print results
-        
+    def _print_results(self, df: 'pd.DataFrame', output_format: str,
+                       group_by_series: bool) -> None:
+        """Dispatch a unified DataFrame to the appropriate output formatter.
+
         Args:
-            results: List of results
-            tags: List of tags
-            output_format: Output format
-            group_by_series: Whether grouped by series
+            df: Unified DataFrame produced by :meth:`build_dataframe`.
+            output_format: One of ``'table'``, ``'csv'``, or ``'json'``.
+            group_by_series: Passed through to :meth:`_print_table` to control
+                column display names for index columns.
         """
         if output_format == 'table':
-            self._print_table(results, tags, group_by_series)
+            self._print_table(df, group_by_series)
         elif output_format == 'csv':
-            self._print_csv(results, tags, group_by_series)
+            self._print_csv(df)
         elif output_format == 'json':
-            self._print_json(results)
+            self._print_json(df)
         else:
             raise ValueError(f"Unsupported output format: {output_format}")
 
-    def _print_table(self, results: List[Dict], tags: List[str], group_by_series: bool) -> None:
-        """Print results in table format using rich"""
-        if not results:
-            self.console.print("[yellow]No results to display[/yellow]")
+    def _print_table(self, df: 'pd.DataFrame', group_by_series: bool) -> None:
+        """Render the unified DataFrame as a rich table.
+
+        Args:
+            df: Unified DataFrame from :meth:`build_dataframe`.
+            group_by_series: Controls whether series-specific index columns
+                (SeriesUID / FileCount / RepresentativeFile) or the file-view
+                index column (FilePath) is shown with its pretty display name.
+        """
+        if df.empty:
+            Console().print("[yellow]No results to display[/yellow]")
             return
 
-        # Create rich table
         table = Table(show_header=True, header_style="bold magenta", show_lines=True)
 
+        # Mapping from DataFrame column names to display names for index columns
         if group_by_series:
-            # Add columns for series view
-            table.add_column("Series UID", style="cyan", no_wrap=False, max_width=30)
-            table.add_column("File Count", style="green", justify="right")
-            table.add_column("Representative File", style="blue", no_wrap=False, max_width=40)
-
-            for tag in tags:
-                table.add_column(f"{tag}", style="yellow", no_wrap=False)
-
-            # Add rows
-            for result in results:
-                row = [
-                    result['SeriesUID'],
-                    str(result['FileCount']),
-                    result['RepresentativeFile']
-                ] + [str(result.get(tag, 'N/A')) for tag in tags]
-                table.add_row(*row)
+            index_display = {
+                'SeriesUID': 'Series UID',
+                'FileCount': 'File Count',
+                'RepresentativeFile': 'Representative File',
+            }
+            index_styles = {
+                'SeriesUID': dict(style="cyan", no_wrap=False, max_width=30),
+                'FileCount': dict(style="green", justify="right"),
+                'RepresentativeFile': dict(style="blue", no_wrap=False, max_width=40),
+            }
+            index_cols = ['SeriesUID', 'FileCount', 'RepresentativeFile']
         else:
-            # Add columns for file view
-            table.add_column("File Path", style="cyan", no_wrap=False, max_width=50)
+            index_display = {'FilePath': 'File Path'}
+            index_styles = {'FilePath': dict(style="cyan", no_wrap=False, max_width=50)}
+            index_cols = ['FilePath']
 
-            for tag in tags:
-                table.add_column(f"{tag}", style="yellow", no_wrap=False)
+        # Add index columns with pretty display names
+        for col in index_cols:
+            if col in df.columns:
+                table.add_column(index_display[col], **index_styles[col])
 
-            # Add rows
-            for result in results:
-                row = [result['FilePath']] + [str(result.get(tag, 'N/A')) for tag in tags]
-                table.add_row(*row)
+        # Add tag / SubjectID columns using the DataFrame column name directly
+        tag_cols = [c for c in df.columns if c not in index_cols]
+        for col in tag_cols:
+            table.add_column(col, style="yellow", no_wrap=False)
 
-        # Get the rich handler's console from logger if available
-        rich_handler = next((h for h in self.logger._logger.handlers if isinstance(h, RichHandler)), None)
+        # Add rows
+        all_cols = [c for c in index_cols if c in df.columns] + tag_cols
+        for _, row in df.iterrows():
+            table.add_row(*[str(row[col]) for col in all_cols])
 
-        if rich_handler:
-            console = rich_handler.console
-        else:
-            # Fallback to default console
-            console = Console()
+        # Resolve console
+        rich_handler = next(
+            (h for h in self.logger._logger.handlers if isinstance(h, RichHandler)),
+            None
+        )
+        console = rich_handler.console if rich_handler else Console()
 
-        # Print table with summary
-        self.logger.info("Printing to rich console.")
+        entity = 'series' if group_by_series else 'files'
         console.print()
         console.print(table)
-        console.print(f"\n[bold green]Total: {len(results)} {'series' if group_by_series else 'files'}[/bold green]")
+        console.print(f"\n[bold green]Total: {len(df)} {entity}[/bold green]")
 
-    def _print_csv(self, results: List[Dict], tags: List[str], group_by_series: bool) -> None:
-        """Print results in CSV format"""
-        if not results:
+    def _print_csv(self, df: 'pd.DataFrame') -> None:
+        """Print the unified DataFrame in CSV format.
+
+        Args:
+            df: Unified DataFrame from :meth:`build_dataframe`.
+        """
+        if df.empty:
             print("# No results to display")
             return
-            
-        if group_by_series:
-            headers = ['SeriesUID', 'FileCount', 'RepresentativeFile'] + tags
-        else:
-            headers = ['FilePath'] + tags
-            
-        # Print CSV header
-        self.logger.info(','.join(headers))
-        
-        # Print data
-        for result in results:
-            row_data = []
-            for header in headers:
-                value = result.get(header, '')
-                # Handle values containing commas
-                if ',' in str(value):
-                    value = f'"{value}"'
-                row_data.append(str(value))
-            self.logger.debug(','.join(row_data))
 
-    def _print_json(self, results: List[Dict]) -> None:
-        """Print results in JSON format"""
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        # Header
+        print(','.join(df.columns))
+
+        # Rows — quote fields that contain commas
+        for _, row in df.iterrows():
+            fields = []
+            for val in row:
+                val = str(val)
+                if ',' in val:
+                    val = f'"{val}"'
+                fields.append(val)
+            print(','.join(fields))
+
+    def _print_json(self, df: 'pd.DataFrame') -> None:
+        """Print the unified DataFrame in JSON format.
+
+        Args:
+            df: Unified DataFrame from :meth:`build_dataframe`.
+        """
+        print(json.dumps(df.to_dict('records'), ensure_ascii=False, indent=2))
 
     def find_json_files(self, input_path: Union[str, Path], recursive: bool = True,
                         max_depth: int = 10) -> List[Path]:
@@ -624,12 +739,14 @@ class DicomTagPrinter:
                                                     group_by_series=False,
                                                     display_tags=display_tags)
 
-        self._print_results(results, display_tags, output_format, group_by_series=False)
+        # Build unified DataFrame and output results
+        df = self.build_dataframe(results, display_tags, group_by_series=False)
+        self._print_results(df, output_format, group_by_series=False)
 
 
 def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) -> None:
     """Convenience function for printing DICOM tags
-    
+
     Args:
         input_path: Input path
         tags: List of tags
