@@ -526,5 +526,219 @@ class TestConvenienceFunction(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# ID-globber tests
+# ---------------------------------------------------------------------------
+
+class TestIdGlobber(unittest.TestCase):
+    """Tests for the --id-globber / id_globber feature."""
+
+    SAMPLE_TAGS = {
+        "0008|0060": "MR",
+        "0008|103e": "t2_tse_dixon_tra_NP_W",
+        "0010|0020": "001",
+    }
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.printer = DicomTagPrinter()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def _write_json(self, filename, data=None):
+        path = Path(self.temp_dir) / filename
+        path.write_text(json.dumps(data or self.SAMPLE_TAGS))
+        return path
+
+    # ------------------------------------------------------------------
+    # _inject_subject_id
+    # ------------------------------------------------------------------
+
+    def test_inject_extracts_id_from_filename(self):
+        """_inject_subject_id stores matched ID in each result's SubjectID key"""
+        self._write_json("subject_001_scan.json")
+        self._write_json("subject_002_scan.json")
+
+        captured = []
+        with patch('builtins.print', side_effect=captured.append):
+            self.printer.print_tags_from_json(
+                self.temp_dir,
+                tags=["0008|0060"],
+                output_format='json',
+                id_globber=r"subject_(\d+)",
+            )
+
+        data = json.loads("\n".join(str(x) for x in captured))
+        ids = {r['SubjectID'] for r in data}
+        self.assertEqual(ids, {"001", "002"})
+
+    def test_inject_full_match_when_no_group(self):
+        """When the globber has no capture group, the full match is used"""
+        self._write_json("NPC001_scan.json")
+
+        captured = []
+        with patch('builtins.print', side_effect=captured.append):
+            self.printer.print_tags_from_json(
+                self.temp_dir,
+                tags=["0008|0060"],
+                output_format='json',
+                id_globber=r"NPC\d+",
+            )
+
+        data = json.loads("\n".join(str(x) for x in captured))
+        self.assertEqual(data[0]['SubjectID'], "NPC001")
+
+    def test_inject_na_when_no_match(self):
+        """When the globber finds no match, SubjectID is set to 'N/A'"""
+        self._write_json("unrecognised_filename.json")
+
+        captured = []
+        with patch('builtins.print', side_effect=captured.append):
+            self.printer.print_tags_from_json(
+                self.temp_dir,
+                tags=["0008|0060"],
+                output_format='json',
+                id_globber=r"NPC\d+",
+            )
+
+        data = json.loads("\n".join(str(x) for x in captured))
+        self.assertEqual(data[0]['SubjectID'], "N/A")
+
+    def test_subject_id_appears_as_column_in_table(self):
+        """SubjectID must appear as a column header in table output"""
+        self._write_json("subject_007_scan.json")
+
+        dtp_mod = sys.modules['mnts.utils.dicom_tag_printer']
+        table_instance = MagicMock()
+        mock_handler = MagicMock()
+        mock_handler.console = MagicMock()
+        self.printer.logger._logger.handlers = [mock_handler]
+
+        with patch.object(dtp_mod, 'Table', return_value=table_instance):
+            self.printer.print_tags_from_json(
+                self.temp_dir,
+                tags=["0008|0060"],
+                output_format='table',
+                id_globber=r"subject_(\d+)",
+            )
+
+        headers = [call.args[0] for call in table_instance.add_column.call_args_list]
+        self.assertIn("SubjectID", headers)
+        # SubjectID must come before the DICOM tag column
+        self.assertLess(headers.index("SubjectID"), headers.index("0008|0060"))
+
+    def test_no_duplicate_columns_with_id_globber(self):
+        """Enabling id_globber must not introduce duplicate column headers"""
+        self._write_json("subject_001_scan.json")
+
+        dtp_mod = sys.modules['mnts.utils.dicom_tag_printer']
+        table_instance = MagicMock()
+        mock_handler = MagicMock()
+        mock_handler.console = MagicMock()
+        self.printer.logger._logger.handlers = [mock_handler]
+
+        with patch.object(dtp_mod, 'Table', return_value=table_instance):
+            self.printer.print_tags_from_json(
+                self.temp_dir,
+                tags=["0008|0060", "0008|103e"],
+                output_format='table',
+                id_globber=r"subject_(\d+)",
+            )
+
+        headers = [call.args[0] for call in table_instance.add_column.call_args_list]
+        self.assertEqual(len(headers), len(set(headers)),
+                         f"Duplicate columns: {headers}")
+
+
+# ---------------------------------------------------------------------------
+# Real sample data tests (skipped when files not present)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_JSON_DIR = Path(__file__).parent / "sample_data" / "json_tags"
+_SAMPLE_NIFTI_DIR = Path(__file__).parent / "sample_data" / "nifti"
+_SAMPLE_NIFTI = _SAMPLE_NIFTI_DIR / "example4d.nii.gz"
+
+_SKIP_JSON = not (_SAMPLE_JSON_DIR.exists() and any(_SAMPLE_JSON_DIR.glob("*.json")))
+_SKIP_NIFTI = not _SAMPLE_NIFTI.exists()
+
+
+@unittest.skipIf(_SKIP_JSON, "Sample JSON tag files not found – run download_sample_data.py first")
+class TestRealJsonSampleData(unittest.TestCase):
+    """Integration tests against the bundled / downloaded JSON sample files."""
+
+    def setUp(self):
+        self.printer = DicomTagPrinter()
+
+    def test_find_json_files_returns_sample_files(self):
+        """All .json files in sample_data/json_tags are discovered"""
+        found = self.printer.find_json_files(_SAMPLE_JSON_DIR)
+        self.assertGreaterEqual(len(found), 1)
+        for f in found:
+            self.assertEqual(f.suffix, ".json")
+
+    def test_read_json_tags_from_sample_file(self):
+        """Sample JSON files can be parsed and common tags are present"""
+        json_files = self.printer.find_json_files(_SAMPLE_JSON_DIR)
+        tags = self.printer.read_json_tags(json_files[0])
+        self.assertIsInstance(tags, dict)
+        self.assertGreater(len(tags), 0)
+        # All values should be strings (whitespace stripped)
+        for v in tags.values():
+            self.assertIsInstance(v, str)
+            self.assertEqual(v, v.strip())
+
+    def test_print_tags_from_json_with_sample_data(self):
+        """print_tags_from_json runs end-to-end on real sample files"""
+        captured = []
+        with patch('builtins.print', side_effect=captured.append):
+            self.printer.print_tags_from_json(
+                _SAMPLE_JSON_DIR,
+                tags=["0008|0060", "0008|103e", "0010|0020"],
+                output_format='json',
+            )
+        output = "\n".join(str(x) for x in captured)
+        data = json.loads(output)
+        self.assertGreaterEqual(len(data), 1)
+        for entry in data:
+            self.assertIn("FilePath", entry)
+            self.assertIn("0008|0060", entry)
+
+    def test_id_globber_with_sample_filenames(self):
+        """id_globber extracts numeric IDs from the sample filenames correctly"""
+        captured = []
+        with patch('builtins.print', side_effect=captured.append):
+            self.printer.print_tags_from_json(
+                _SAMPLE_JSON_DIR,
+                tags=["0008|0060"],
+                output_format='json',
+                id_globber=r"subject_(\d+)",
+            )
+        output = "\n".join(str(x) for x in captured)
+        data = json.loads(output)
+        for entry in data:
+            self.assertIn("SubjectID", entry)
+            # All sample files follow the subject_NNN naming scheme
+            self.assertNotEqual(entry["SubjectID"], "N/A",
+                                msg=f"Failed to extract ID from {entry['FilePath']}")
+
+
+@unittest.skipIf(_SKIP_NIFTI,
+                 "Sample NIfTI not found – run 'python download_sample_data.py --nifti' first")
+class TestRealNiftiSampleData(unittest.TestCase):
+    """Smoke tests that verify the downloaded NIfTI file is a valid file."""
+
+    def test_nifti_file_is_non_empty(self):
+        """Downloaded NIfTI file has non-zero size"""
+        self.assertGreater(_SAMPLE_NIFTI.stat().st_size, 0)
+
+    def test_nifti_file_is_gzip(self):
+        """Downloaded NIfTI file starts with a gzip magic number"""
+        with open(_SAMPLE_NIFTI, 'rb') as fh:
+            magic = fh.read(2)
+        self.assertEqual(magic, b'\x1f\x8b', "File does not appear to be gzip compressed")
+
+
 if __name__ == '__main__':
     unittest.main()
