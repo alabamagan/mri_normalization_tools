@@ -14,9 +14,9 @@ import sys
     '-t', '--tags',
     type=str,
     multiple=True,
-    required=True,
+    required=False,
     callback=validate_tag_format,
-    help='DICOM tags to print (format: 0008|103e). Can specify multiple tags. Use "default"' 
+    help='DICOM tags to print (format: 0008|103e). Can specify multiple tags. Use "default"'
          ' for default set of tags including TE/TR/Machine Name/Tesla'
 )
 @click.option(
@@ -48,6 +48,14 @@ import sys
     help='Maximum search depth (default: 10)'
 )
 @click.option(
+    '--json-source',
+    is_flag=True,
+    default=False,
+    help='Read DICOM tags from JSON files instead of DICOM files. '
+         'INPUT_PATH should point to a .json file or a directory containing .json files '
+         'where each file holds tags as {"XXXX|XXXX": "value"} pairs.'
+)
+@click.option(
     '--verbose', '-v',
     is_flag=True,
     help='Show verbose information'
@@ -60,14 +68,15 @@ def dicom_tag_printer_cli(
         format: str,
         backend: str,
         max_depth: int,
+        json_source: bool,
         verbose: bool
 ):
     """
-    DICOM Tag Printer - Print specific tag information from DICOM files.
+    DICOM Tag Printer - Print specific tag information from DICOM files or JSON tag dumps.
 
-    This tool reads DICOM files or directories and prints specific DICOM tag information
-    for all sequences. Supports single files, recursive directory search, and batch processing
-    of multiple tags.
+    This tool reads DICOM files (or pre-extracted JSON tag files) and prints specific
+    DICOM tag information for all sequences. Supports single files, recursive directory
+    search, and batch processing of multiple tags.
 
     \b
     Common DICOM Tags:
@@ -81,7 +90,7 @@ def dicom_tag_printer_cli(
 
     \b
     Examples:
-        >>>  # Print series description from single file
+        >>>  # Print series description from single DICOM file
         >>>  dicom-tag-printer image.dcm -t 0008|103e
         >>>
         >>>  # Print patient ID and series description from all series in directory
@@ -89,6 +98,12 @@ def dicom_tag_printer_cli(
         >>>
         >>>  # Output in CSV format
         >>>  dicom-tag-printer /path/to/dicom -t 0008|103e -f csv
+        >>>
+        >>>  # Read tags from a directory of JSON files (all tags)
+        >>>  dicom-tag-printer /path/to/json_dir --json-source
+        >>>
+        >>>  # Read specific tags from JSON files
+        >>>  dicom-tag-printer /path/to/json_dir --json-source -t 0008|103e -t 0010|0020
     """
 
     # Set log level
@@ -99,36 +114,54 @@ def dicom_tag_printer_cli(
     if verbose:
         click.echo("Configuration:")
         click.echo(f"  Input path: {input_path.absolute()}")
-        click.echo(f"  Tags: {', '.join(tags)}")
+        click.echo(f"  Tags: {', '.join(tags) if tags else '(all)'}")
+        click.echo(f"  Source format: {'json' if json_source else 'dicom'}")
         click.echo(f"  Recursive: {recursive}")
-        click.echo(f"  Group by series: {group_by_series}")
+        if not json_source:
+            click.echo(f"  Group by series: {group_by_series}")
+            click.echo(f"  Backend: {backend}")
         click.echo(f"  Output format: {format}")
-        click.echo(f"  Backend: {backend}")
         click.echo(f"  Max depth: {max_depth}")
         click.echo()
 
-    if tags[0] == 'default':
-        tags = [
-           "0008|103e",
-           "0010|0020",
-           "0020|0011",
-           "0008|0020",
-           "0020|000e",
-           "0008|0060",
-           "0018|0050"
-        ] + list(tags[1:] if len(tags) > 1 else [])
-
     try:
-        # Create printer and execute
         printer = DicomTagPrinter(backend=backend)
-        printer.print_tags(
-            input_path=input_path,
-            tags=list(tags),
-            recursive=recursive,
-            group_by_series=group_by_series,
-            output_format=format,
-            max_depth=max_depth
-        )
+
+        if json_source:
+            # JSON-file source: tags are optional (show all when omitted)
+            tag_list = list(tags) if tags else None
+            printer.print_tags_from_json(
+                input_path=input_path,
+                tags=tag_list,
+                recursive=recursive,
+                output_format=format,
+                max_depth=max_depth
+            )
+        else:
+            # Classic DICOM source: tags are required
+            if not tags:
+                raise click.UsageError("At least one --tags / -t option is required when reading DICOM files.")
+
+            tag_list = list(tags)
+            if tag_list[0] == 'default':
+                tag_list = [
+                    "0008|103e",
+                    "0010|0020",
+                    "0020|0011",
+                    "0008|0020",
+                    "0020|000e",
+                    "0008|0060",
+                    "0018|0050"
+                ] + tag_list[1:]
+
+            printer.print_tags(
+                input_path=input_path,
+                tags=tag_list,
+                recursive=recursive,
+                group_by_series=group_by_series,
+                output_format=format,
+                max_depth=max_depth
+            )
 
     except KeyboardInterrupt:
         click.echo("\nOperation interrupted by user")
