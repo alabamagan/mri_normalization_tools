@@ -56,6 +56,14 @@ import sys
          'where each file holds tags as {"XXXX|XXXX": "value"} pairs.'
 )
 @click.option(
+    '-g', '--id-globber',
+    type=str,
+    default=None,
+    help='Regex pattern to extract a subject/case ID from each file name. '
+         'When provided, a SubjectID column is prepended to the output. '
+         'Example: "(?i)(NPC|P)?[0-9]{3,5}" or "subject_([0-9]+)".'
+)
+@click.option(
     '--verbose', '-v',
     is_flag=True,
     help='Show verbose information'
@@ -69,6 +77,7 @@ def dicom_tag_printer_cli(
         backend: str,
         max_depth: int,
         json_source: bool,
+        id_globber: str,
         verbose: bool
 ):
     """
@@ -120,6 +129,7 @@ def dicom_tag_printer_cli(
         if not json_source:
             click.echo(f"  Group by series: {group_by_series}")
             click.echo(f"  Backend: {backend}")
+        click.echo(f"  ID globber: {id_globber or '(none)'}")
         click.echo(f"  Output format: {format}")
         click.echo(f"  Max depth: {max_depth}")
         click.echo()
@@ -135,7 +145,8 @@ def dicom_tag_printer_cli(
                 tags=tag_list,
                 recursive=recursive,
                 output_format=format,
-                max_depth=max_depth
+                max_depth=max_depth,
+                id_globber=id_globber,
             )
         else:
             # Classic DICOM source: tags are required
@@ -160,7 +171,8 @@ def dicom_tag_printer_cli(
                 recursive=recursive,
                 group_by_series=group_by_series,
                 output_format=format,
-                max_depth=max_depth
+                max_depth=max_depth,
+                id_globber=id_globber,
             )
 
     except KeyboardInterrupt:

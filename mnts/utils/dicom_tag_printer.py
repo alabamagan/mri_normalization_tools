@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Union, Optional
 from collections import defaultdict
+from rich.console import Console
 from rich.table import Table
 from rich.logging import RichHandler
 
@@ -299,11 +300,12 @@ class DicomTagPrinter:
         
         return dict(series_groups)
 
-    def print_tags(self, input_path: Union[str, Path], tags: List[str], 
+    def print_tags(self, input_path: Union[str, Path], tags: List[str],
                    recursive: bool = True, group_by_series: bool = True,
-                   output_format: str = 'table', max_depth: int = 10) -> None:
+                   output_format: str = 'table', max_depth: int = 10,
+                   id_globber: Optional[str] = None) -> None:
         """Print DICOM tag information
-        
+
         Args:
             input_path: Input path
             tags: List of tags to print
@@ -311,32 +313,37 @@ class DicomTagPrinter:
             group_by_series: Whether to group by series
             output_format: Output format ('table', 'csv', 'json')
             max_depth: Maximum search depth
+            id_globber: Optional regex pattern to extract a subject/case ID from
+                each file path.  When supplied, a ``SubjectID`` column is
+                prepended to the output table derived by applying the pattern to
+                the representative file path (series view) or each file path
+                (file view).
         """
         self.logger.info(f"Processing: {input_path}")
         self.logger.info(f"Tags to read: {tags}")
-        
+
         # Find DICOM files
         dicom_files = self.find_dicom_files(input_path, recursive, max_depth)
-        
+
         if not dicom_files:
             self.logger.warning("No DICOM files found")
             return
-            
+
         self.logger.info(f"Found {len(dicom_files)} DICOM files")
-        
+
         # Read tag information
         results = []
-        
+        display_tags = list(tags)
+
         if group_by_series:
             # Group by series
             series_groups = self.group_by_series(dicom_files)
             self.logger.info(f"Found {len(series_groups)} series")
-            
+
             for series_uid, files in series_groups.items():
-                # Read first file of each series as representative
                 representative_file = files[0]
                 tag_values = self.read_dicom_tags(representative_file, tags)
-                
+
                 result = {
                     'SeriesUID': series_uid,
                     'FileCount': len(files),
@@ -353,9 +360,13 @@ class DicomTagPrinter:
                     **tag_values
                 }
                 results.append(result)
-        
+
+        if id_globber:
+            display_tags = self._inject_subject_id(results, id_globber,
+                                                    group_by_series, display_tags)
+
         # Output results
-        self._print_results(results, tags, output_format, group_by_series)
+        self._print_results(results, display_tags, output_format, group_by_series)
 
     def _print_results(self, results: List[Dict], tags: List[str], 
                       output_format: str, group_by_series: bool) -> None:
@@ -391,7 +402,6 @@ class DicomTagPrinter:
             table.add_column("File Count", style="green", justify="right")
             table.add_column("Representative File", style="blue", no_wrap=False, max_width=40)
 
-            tags = results[0].keys()
             for tag in tags:
                 table.add_column(f"{tag}", style="yellow", no_wrap=False)
 
@@ -407,12 +417,12 @@ class DicomTagPrinter:
             # Add columns for file view
             table.add_column("File Path", style="cyan", no_wrap=False, max_width=50)
 
-            for tag in result.keys():
+            for tag in tags:
                 table.add_column(f"{tag}", style="yellow", no_wrap=False)
 
             # Add rows
             for result in results:
-                row = [result['FilePath']] + [result.get(tag, 'N/A') for tag in tags]
+                row = [result['FilePath']] + [str(result.get(tag, 'N/A')) for tag in tags]
                 table.add_row(*row)
 
         # Get the rich handler's console from logger if available
@@ -533,9 +543,38 @@ class DicomTagPrinter:
                 result[tag_str] = 'Missing'
         return result
 
+    def _inject_subject_id(self, results: List[Dict], id_globber: str,
+                           group_by_series: bool, display_tags: List[str]) -> List[str]:
+        """Extract a subject ID from each result's file path and store it in the
+        result dict under the key ``'SubjectID'``.
+
+        The extracted ID is prepended to *display_tags* so it appears as the
+        first data column after the path column.
+
+        Args:
+            results: Result dicts to mutate in-place.
+            id_globber: Regex pattern whose first match group (or full match if
+                no groups) is used as the subject ID.
+            group_by_series: When True, the path key is ``'RepresentativeFile'``,
+                otherwise ``'FilePath'``.
+            display_tags: Current list of tags to display.
+
+        Returns:
+            Updated display_tags with ``'SubjectID'`` prepended.
+        """
+        path_key = 'RepresentativeFile' if group_by_series else 'FilePath'
+        for result in results:
+            path_str = result.get(path_key, '')
+            mo = re.search(id_globber, Path(path_str).name)
+            if mo:
+                result['SubjectID'] = mo.group(1) if mo.lastindex else mo.group()
+            else:
+                result['SubjectID'] = 'N/A'
+        return ['SubjectID'] + display_tags
+
     def print_tags_from_json(self, input_path: Union[str, Path], tags: Optional[List[str]] = None,
                              recursive: bool = True, output_format: str = 'table',
-                             max_depth: int = 10) -> None:
+                             max_depth: int = 10, id_globber: Optional[str] = None) -> None:
         """Print DICOM tag information sourced from a directory of JSON files
 
         Each JSON file in *input_path* is treated as one entry (typically one
@@ -548,6 +587,9 @@ class DicomTagPrinter:
             recursive: Whether to search subdirectories for JSON files
             output_format: Output format (``'table'``, ``'csv'``, or ``'json'``)
             max_depth: Maximum directory search depth
+            id_globber: Optional regex pattern to extract a subject/case ID from
+                each JSON file's name.  When supplied, a ``SubjectID`` column is
+                prepended to the output.
         """
         self.logger.info(f"Processing JSON source: {input_path}")
 
@@ -575,7 +617,13 @@ class DicomTagPrinter:
             }
             results.append(result)
 
-        self._print_results(results, effective_tags or [], output_format, group_by_series=False)
+        display_tags = list(effective_tags or [])
+        if id_globber:
+            display_tags = self._inject_subject_id(results, id_globber,
+                                                    group_by_series=False,
+                                                    display_tags=display_tags)
+
+        self._print_results(results, display_tags, output_format, group_by_series=False)
 
 
 def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) -> None:
