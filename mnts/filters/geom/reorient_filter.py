@@ -17,23 +17,25 @@ class ReorientFilter(MNTSFilter):
             A three character string representing orientation code. E.g., 'LPS'.
     """
     def __init__(self, target_orientation: str = 'RAI'):
+        super(ReorientFilter, self).__init__()
         self.target_orientation = target_orientation
 
     @property
     def target_orientation(self):
-        self._target_orientation
+        return self._target_orientation
 
     @target_orientation.setter
-    def target_orientation(self, val:str):
-        assert type(val), "Input must be string of three characters"
-        assert re.match(r"(?i)[railps]{3}", val) is not None, "Input must be string of three characters"
-        self._target_orientation = val
+    def target_orientation(self, val: str):
+        assert isinstance(val, str), "Input must be a string of three characters"
+        assert re.fullmatch(r"(?i)[railps]{3}", val) is not None, \
+            f"Input must be a three-character orientation code using R/L, A/P, I/S, got '{val}'"
+        self._target_orientation = val.upper()
 
     def filter(self,
                image: Union[str, sitk.Image],
                mask: Union[str, sitk.Image] = None):
         """
-        Apply DICOMOirent filter to both inputs
+        Apply DICOMOrient filter to both inputs
         """
         image = self.read_image(image)
         mask = self.read_image(mask) if mask is not None else None
