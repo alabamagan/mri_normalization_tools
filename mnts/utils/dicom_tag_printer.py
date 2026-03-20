@@ -11,6 +11,7 @@ Author: MRI Normalization Tools
 
 import os
 import re
+import json
 from pathlib import Path
 from typing import List, Dict, Union, Optional
 from collections import defaultdict
@@ -40,7 +41,7 @@ from ..mnts_logger import MNTSLogger
 from .preprocessing import recursive_list_dir
 from ..io.data_formatting import pydicom_read_series
 
-__all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format']
+__all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format', 'print_dicom_tags_from_json']
 
 
 class DicomTagPrinter:
@@ -455,8 +456,126 @@ class DicomTagPrinter:
 
     def _print_json(self, results: List[Dict]) -> None:
         """Print results in JSON format"""
-        import json
         print(json.dumps(results, ensure_ascii=False, indent=2))
+
+    def find_json_files(self, input_path: Union[str, Path], recursive: bool = True,
+                        max_depth: int = 10) -> List[Path]:
+        """Find .json files in a directory
+
+        Args:
+            input_path: Input path (file or directory)
+            recursive: Whether to search recursively
+            max_depth: Maximum search depth
+
+        Returns:
+            List of .json file paths
+        """
+        input_path = Path(input_path)
+        json_files = []
+
+        if input_path.is_file():
+            if input_path.suffix.lower() == '.json':
+                json_files.append(input_path)
+        elif input_path.is_dir():
+            if recursive:
+                try:
+                    dirs = recursive_list_dir(max_depth, str(input_path))
+                    for dir_path in dirs:
+                        for file_path in Path(dir_path).glob('*.json'):
+                            if file_path.is_file():
+                                json_files.append(file_path)
+                except Exception as e:
+                    self.logger.warning(f"Failed to use recursive_list_dir, using standard method: {e}")
+                    for file_path in input_path.rglob('*.json'):
+                        json_files.append(file_path)
+            else:
+                for file_path in input_path.glob('*.json'):
+                    json_files.append(file_path)
+
+        return sorted(json_files)
+
+    def read_json_tags(self, file_path: Union[str, Path], tags: Optional[List[str]] = None) -> Dict[str, str]:
+        """Read DICOM tags from a JSON file containing key-value pairs
+
+        The JSON file is expected to contain DICOM tags as keys in the format
+        ``"XXXX|XXXX"`` (e.g. ``"0008|103e"``) with their string values.
+
+        Args:
+            file_path: Path to the JSON file
+            tags: List of tags to extract. When ``None`` or empty, all tags in
+                  the file are returned.
+
+        Returns:
+            Dictionary mapping tag keys (or description strings) to their values.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            self.logger.error(f"Cannot read JSON file {file_path}: {e}")
+            return {tag: 'Error' for tag in (tags or [])}
+
+        if not isinstance(data, dict):
+            self.logger.error(f"Expected a JSON object in {file_path}, got {type(data).__name__}")
+            return {tag: 'Error' for tag in (tags or [])}
+
+        # Strip whitespace from values
+        data = {k: str(v).strip() for k, v in data.items()}
+
+        if not tags:
+            return data
+
+        result = {}
+        for tag_str in tags:
+            if tag_str in data:
+                result[tag_str] = data[tag_str]
+            else:
+                result[tag_str] = 'Missing'
+        return result
+
+    def print_tags_from_json(self, input_path: Union[str, Path], tags: Optional[List[str]] = None,
+                             recursive: bool = True, output_format: str = 'table',
+                             max_depth: int = 10) -> None:
+        """Print DICOM tag information sourced from a directory of JSON files
+
+        Each JSON file in *input_path* is treated as one entry (typically one
+        series) and must contain DICOM tags as ``"XXXX|XXXX": "value"`` pairs.
+
+        Args:
+            input_path: Path to a single JSON file or a directory of JSON files
+            tags: List of tags to display.  When ``None`` or empty, all tags
+                  found in the first JSON file are used as the column set.
+            recursive: Whether to search subdirectories for JSON files
+            output_format: Output format (``'table'``, ``'csv'``, or ``'json'``)
+            max_depth: Maximum directory search depth
+        """
+        self.logger.info(f"Processing JSON source: {input_path}")
+
+        json_files = self.find_json_files(input_path, recursive, max_depth)
+
+        if not json_files:
+            self.logger.warning("No JSON files found")
+            return
+
+        self.logger.info(f"Found {len(json_files)} JSON file(s)")
+
+        results = []
+        effective_tags: Optional[List[str]] = list(tags) if tags else None
+
+        for file_path in json_files:
+            tag_values = self.read_json_tags(file_path, effective_tags)
+
+            # On first file, if no tags were specified derive column set from file
+            if effective_tags is None:
+                effective_tags = list(tag_values.keys())
+
+            result = {
+                'FilePath': str(file_path),
+                **tag_values
+            }
+            results.append(result)
+
+        self._print_results(results, effective_tags or [], output_format, group_by_series=False)
 
 
 def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) -> None:
@@ -469,6 +588,20 @@ def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) ->
     """
     printer = DicomTagPrinter()
     printer.print_tags(input_path, tags, **kwargs)
+
+
+def print_dicom_tags_from_json(input_path: Union[str, Path], tags: Optional[List[str]] = None,
+                               **kwargs) -> None:
+    """Convenience function for printing DICOM tags sourced from JSON files
+
+    Args:
+        input_path: Path to a JSON file or directory of JSON files
+        tags: List of tags to display (all tags shown when omitted)
+        **kwargs: Additional arguments passed to
+                  :meth:`DicomTagPrinter.print_tags_from_json`
+    """
+    printer = DicomTagPrinter()
+    printer.print_tags_from_json(input_path, tags, **kwargs)
 
 
 def validate_tag_format(ctx, param, value):
