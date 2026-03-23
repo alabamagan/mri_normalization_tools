@@ -429,7 +429,7 @@ class MNTSLogger(object):
                 pass
             self.__del__()
 
-    def __class_getitem__(cls, item):
+    def __class_getitem__(cls, item) -> "MNTSLogger":
         # If global logger haven't be created, casually use temp file to host the log
         if cls.global_logger == 'Init' or cls.global_logger is None:
             cls.global_logger = MNTSLogger('./default.log', logger_name='default',

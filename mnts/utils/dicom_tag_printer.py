@@ -435,6 +435,7 @@ class DicomTagPrinter:
             console = Console()
 
         # Print table with summary
+        self.logger.info("Printing to rich console.")
         console.print()
         console.print(table)
         console.print(f"\n[bold green]Total: {len(results)} {'series' if group_by_series else 'files'}[/bold green]")
@@ -451,7 +452,7 @@ class DicomTagPrinter:
             headers = ['FilePath'] + tags
             
         # Print CSV header
-        print(','.join(headers))
+        self.logger.info(','.join(headers))
         
         # Print data
         for result in results:
@@ -462,7 +463,7 @@ class DicomTagPrinter:
                 if ',' in str(value):
                     value = f'"{value}"'
                 row_data.append(str(value))
-            print(','.join(row_data))
+            self.logger.debug(','.join(row_data))
 
     def _print_json(self, results: List[Dict]) -> None:
         """Print results in JSON format"""
