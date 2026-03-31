@@ -82,7 +82,6 @@ class DicomTagPrinter:
     def __init__(self, backend: str = 'auto', logger=None):
         self.logger = logger or MNTSLogger['DicomTagPrinter']
 
-        # Select backend
         if backend == 'auto':
             if PYDICOM_AVAILABLE:
                 self.backend = 'pydicom'
@@ -115,20 +114,16 @@ class DicomTagPrinter:
             tags: List of tags to read, format: ['0008|103e', '0010|0020']
 
         Returns:
-            Dictionary containing tag values
+            Dictionary mapping raw tag strings to their values.
         """
         try:
-            ds = pydicom.dcmread(file_path, force=True)
+            ds = pydicom.dcmread(file_path, stop_before_pixels=True, force=True)
             result = {}
 
             for tag_str in tags:
                 try:
                     group, element = tag_str.split('|')
                     tag = pydicom.tag.Tag(int(group, 16), int(element, 16))
-                    try:
-                        tag_str = dictionary_description(tag)
-                    except:
-                        pass
 
                     if tag in ds:
                         result[tag_str] = str(ds[tag].value).strip()
@@ -153,7 +148,7 @@ class DicomTagPrinter:
             tags: List of tags to read, format: ['0008|103e', '0010|0020']
 
         Returns:
-            Dictionary containing tag values
+            Dictionary mapping raw tag strings to their values.
         """
         try:
             reader = sitk.ImageFileReader()
@@ -186,7 +181,7 @@ class DicomTagPrinter:
             tags: List of tags to read
 
         Returns:
-            Dictionary containing tag values
+            Dictionary mapping raw tag strings to their values.
         """
         if self.backend == 'pydicom':
             return self.read_dicom_tag_pydicom(file_path, tags)
@@ -196,6 +191,51 @@ class DicomTagPrinter:
     # ------------------------------------------------------------------
     # File discovery
     # ------------------------------------------------------------------
+
+    def _find_files(self, input_path: Union[str, Path], predicate,
+                    glob_pattern: str, recursive: bool, max_depth: int) -> List[Path]:
+        """Generic file finder with recursive_list_dir and rglob fallback.
+
+        Args:
+            input_path: File or directory to search.
+            predicate: Callable[[Path], bool] — returns True for files to include.
+            glob_pattern: Pattern passed to Path.glob() when iterating
+                directories returned by recursive_list_dir (e.g. ``'*'`` or
+                ``'*.json'``).
+            recursive: Whether to descend into subdirectories.
+            max_depth: Maximum depth passed to recursive_list_dir.
+
+        Returns:
+            Sorted list of matching file paths.
+        """
+        input_path = Path(input_path)
+        found = []
+
+        if input_path.is_file():
+            if predicate(input_path):
+                found.append(input_path)
+        elif input_path.is_dir():
+            if recursive:
+                try:
+                    # recursive_list_dir returns every directory that has files
+                    # directly inside it; use non-recursive glob on each to
+                    # avoid double-counting files in nested directories.
+                    dirs = recursive_list_dir(max_depth, str(input_path))
+                    for dir_path in dirs:
+                        for fp in Path(dir_path).glob(glob_pattern):
+                            if fp.is_file() and predicate(fp):
+                                found.append(fp)
+                except Exception as e:
+                    self.logger.warning(f"Failed to use recursive_list_dir, using rglob: {e}")
+                    for fp in input_path.rglob(glob_pattern):
+                        if fp.is_file() and predicate(fp):
+                            found.append(fp)
+            else:
+                for fp in input_path.iterdir():
+                    if fp.is_file() and predicate(fp):
+                        found.append(fp)
+
+        return sorted(found)
 
     def find_dicom_files(self, input_path: Union[str, Path], recursive: bool = True,
                          max_depth: int = 10) -> List[Path]:
@@ -209,31 +249,7 @@ class DicomTagPrinter:
         Returns:
             List of DICOM file paths
         """
-        input_path = Path(input_path)
-        dicom_files = []
-
-        if input_path.is_file():
-            if self.is_dicom_file(input_path):
-                dicom_files.append(input_path)
-        elif input_path.is_dir():
-            if recursive:
-                try:
-                    dirs = recursive_list_dir(max_depth, str(input_path))
-                    for dir_path in dirs:
-                        for file_path in Path(dir_path).rglob('*'):
-                            if file_path.is_file() and self.is_dicom_file(file_path):
-                                dicom_files.append(file_path)
-                except Exception as e:
-                    self.logger.warning(f"Failed to use recursive_list_dir, using standard method: {e}")
-                    for file_path in input_path.rglob('*'):
-                        if file_path.is_file() and self.is_dicom_file(file_path):
-                            dicom_files.append(file_path)
-            else:
-                for file_path in input_path.iterdir():
-                    if file_path.is_file() and self.is_dicom_file(file_path):
-                        dicom_files.append(file_path)
-
-        return sorted(dicom_files)
+        return self._find_files(input_path, self.is_dicom_file, '*', recursive, max_depth)
 
     def is_dicom_file(self, file_path: Path) -> bool:
         """Check if file is DICOM format.
@@ -252,7 +268,7 @@ class DicomTagPrinter:
                 try:
                     pydicom.dcmread(file_path, stop_before_pixels=True)
                     return True
-                except:
+                except Exception:
                     return False
             elif self.backend == 'sitk' and SITK_AVAILABLE:
                 try:
@@ -260,9 +276,9 @@ class DicomTagPrinter:
                     reader.SetFileName(str(file_path))
                     reader.ReadImageInformation()
                     return True
-                except:
+                except Exception:
                     return False
-        except:
+        except Exception:
             pass
 
         return False
@@ -279,29 +295,13 @@ class DicomTagPrinter:
         Returns:
             List of .json file paths
         """
-        input_path = Path(input_path)
-        json_files = []
-
-        if input_path.is_file():
-            if input_path.suffix.lower() == '.json':
-                json_files.append(input_path)
-        elif input_path.is_dir():
-            if recursive:
-                try:
-                    dirs = recursive_list_dir(max_depth, str(input_path))
-                    for dir_path in dirs:
-                        for file_path in Path(dir_path).glob('*.json'):
-                            if file_path.is_file():
-                                json_files.append(file_path)
-                except Exception as e:
-                    self.logger.warning(f"Failed to use recursive_list_dir, using standard method: {e}")
-                    for file_path in input_path.rglob('*.json'):
-                        json_files.append(file_path)
-            else:
-                for file_path in input_path.glob('*.json'):
-                    json_files.append(file_path)
-
-        return sorted(json_files)
+        return self._find_files(
+            input_path,
+            lambda p: p.suffix.lower() == '.json',
+            '*.json',
+            recursive,
+            max_depth,
+        )
 
     # ------------------------------------------------------------------
     # Grouping & aggregation
@@ -386,7 +386,8 @@ class DicomTagPrinter:
                 result[tag] = values[0] if values else 'Missing'
                 continue
 
-            if len(set(valid)) == 1:
+            # Short-circuit: if all values are the same, no need to build a full set
+            if all(v == valid[0] for v in valid[1:]):
                 result[tag] = valid[0]
                 continue
 
@@ -414,7 +415,7 @@ class DicomTagPrinter:
                   the file are returned.
 
         Returns:
-            Dictionary mapping tag keys (or description strings) to their values.
+            Dictionary mapping tag keys to their values.
         """
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -493,7 +494,7 @@ class DicomTagPrinter:
             raise ImportError("pandas is required for build_dataframe. "
                               "Install it with: pip install pandas")
 
-        has_subject_id = results and 'SubjectID' in results[0]
+        has_subject_id = bool(results) and 'SubjectID' in results[0]
 
         if has_subject_id:
             index_cols = ['SubjectID', 'FileCount'] if group_by_series else ['SubjectID']
@@ -640,25 +641,24 @@ class DicomTagPrinter:
 
     def _print_table(self, df: 'pd.DataFrame') -> None:
         """Render the unified DataFrame as a rich table."""
-        if df.empty:
-            Console().print("[yellow]No results to display[/yellow]")
-            return
-
-        table = Table(show_header=True, header_style="bold magenta", show_lines=True)
-
-        for col in df.columns:
-            style = _COL_STYLES.get(col, _DEFAULT_TAG_STYLE)
-            table.add_column(col, **style)
-
-        for _, row in df.iterrows():
-            table.add_row(*[str(v) for v in row])
-
-        # Resolve console from logger's RichHandler if available
+        # Resolve console once; used for both empty and non-empty cases
         rich_handler = next(
             (h for h in self.logger._logger.handlers if isinstance(h, RichHandler)),
             None,
         )
         console = rich_handler.console if rich_handler else Console()
+
+        if df.empty:
+            console.print("[yellow]No results to display[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold magenta", show_lines=True)
+
+        for col in df.columns:
+            table.add_column(col, **_COL_STYLES.get(col, _DEFAULT_TAG_STYLE))
+
+        for row in df.itertuples(index=False, name=None):
+            table.add_row(*[str(v) for v in row])
 
         entity = 'series' if 'FileCount' in df.columns else 'files'
         console.print()
@@ -670,17 +670,9 @@ class DicomTagPrinter:
         if df.empty:
             print("# No results to display")
             return
-
-        print(','.join(df.columns))
-
-        for _, row in df.iterrows():
-            fields = []
-            for val in row:
-                val = str(val)
-                if ',' in val:
-                    val = f'"{val}"'
-                fields.append(val)
-            print(','.join(fields))
+        # Use pandas to_csv for correct RFC 4180 quoting (handles commas,
+        # embedded quotes, and newlines in values)
+        print(df.to_csv(index=False), end='')
 
     def _print_json(self, df: 'pd.DataFrame') -> None:
         """Print the unified DataFrame in JSON format."""
