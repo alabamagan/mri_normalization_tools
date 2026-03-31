@@ -11,6 +11,12 @@ import sys
     required=True
 )
 @click.option(
+    '-o', '--output',
+    type=click.Path(exists=True, path_type=Path),
+    required=False,
+    default=Path('.')
+)
+@click.option(
     '-t', '--tags',
     type=str,
     multiple=True,
@@ -70,6 +76,7 @@ import sys
 )
 def dicom_tag_printer_cli(
         input_path: Path,
+        output: Path,
         tags: tuple,
         recursive: bool,
         group_by_series: bool,
@@ -136,11 +143,25 @@ def dicom_tag_printer_cli(
 
     try:
         printer = DicomTagPrinter(backend=backend)
+        if json_source:
+            # For json tag list is option, print all if not provided.
+            tag_list = list(tags) if tags else None
+        else:
+            tag_list = list(tags)
+
+        if tag_list[0] == 'default':
+            tag_list = [
+                           "0008|103e",
+                           "0010|0020",
+                           "0020|0011",
+                           "0008|0020",
+                           "0020|000e",
+                           "0008|0060",
+                           "0018|0050"
+                       ] + tag_list[1:]
 
         if json_source:
-            # JSON-file source: tags are optional (show all when omitted)
-            tag_list = list(tags) if tags else None
-            printer.print_tags_from_json(
+            tags = printer.get_tags_from_json(
                 input_path=input_path,
                 tags=tag_list,
                 recursive=recursive,
@@ -148,6 +169,7 @@ def dicom_tag_printer_cli(
                 max_depth=max_depth,
                 id_globber=id_globber,
             )
+            printer._print_results(tags, format)
         else:
             # Classic DICOM source: tags are required
             if not tags:
@@ -165,7 +187,7 @@ def dicom_tag_printer_cli(
                     "0018|0050"
                 ] + tag_list[1:]
 
-            printer.print_tags(
+            tags = printer.print_tags(
                 input_path=input_path,
                 tags=tag_list,
                 recursive=recursive,
@@ -174,6 +196,17 @@ def dicom_tag_printer_cli(
                 max_depth=max_depth,
                 id_globber=id_globber,
             )
+
+        if output.is_dir():
+            output = output / 'print_dcm_tags'
+
+        if format == 'csv' and tags is not None:
+            printer.logger.info(f"Writing to to: {output.with_suffix('.csv')}")
+            tags.to_csv(output.with_suffix('.csv'))
+        elif format == 'json':
+            printer.logger.warning(f"This path of outputing json is not verified")
+            printer.logger.info(f"Writing to to: {output.with_suffix('.json')}")
+            json.dumps(tags.to_dict('records'), ensure_ascii=False, indent=2)
 
     except KeyboardInterrupt:
         click.echo("\nOperation interrupted by user")

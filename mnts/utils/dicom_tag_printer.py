@@ -13,7 +13,7 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union, Optional, Any
 from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
@@ -188,6 +188,24 @@ class DicomTagPrinter:
         else:
             return self.read_dicom_tag_sitk(file_path, tags)
 
+    def get_tag_name(self, tag: Union[str, Any]) -> str:
+        r"""For use with JSON source"""
+        if not PYDICOM_AVAILABLE:
+            # Fall back when pydicom is not available
+            return tag
+
+        try:
+            if isinstance(tag, str):
+                group, elem = tag.split("|")
+                tag = (int(group, 16) << 16) | int(elem, 16)
+            elif isinstance(tag, BaseTag):
+                tag = int(tag)
+            elif isinstance(tag, tuple):
+                tag = (tag[0] << 16) | tag[1]
+            return dictionary_description(tag)
+        except (KeyError, ValueError):
+            # Return if anything happens
+            return tag
     # ------------------------------------------------------------------
     # File discovery
     # ------------------------------------------------------------------
@@ -503,11 +521,14 @@ class DicomTagPrinter:
         else:
             index_cols = ['FilePath']
 
+        # Build columns
         tag_cols = [t for t in tags if t not in index_cols]
         all_cols = index_cols + tag_cols
 
         rows = [{col: result.get(col, 'N/A') for col in all_cols} for result in results]
-        return pd.DataFrame(rows, columns=all_cols)
+        df = pd.DataFrame(rows, columns=all_cols)
+        df.columns = [self.get_tag_name(tag) for tag in df.columns]
+        return df
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -576,11 +597,11 @@ class DicomTagPrinter:
         df = self.build_dataframe(results, tags, group_by_series)
         self._print_results(df, output_format)
 
-    def print_tags_from_json(self, input_path: Union[str, Path],
-                             tags: Optional[List[str]] = None,
-                             recursive: bool = True, output_format: str = 'table',
-                             max_depth: int = 10,
-                             id_globber: Optional[str] = None) -> None:
+    def get_tags_from_json(self, input_path: Union[str, Path],
+                           tags: Optional[List[str]] = None,
+                           recursive: bool = True, output_format: str = 'table',
+                           max_depth: int = 10,
+                           id_globber: Optional[str] = None) -> pd.DataFrame | None:
         """Print DICOM tag information sourced from a directory of JSON files.
 
         Each JSON file in *input_path* is treated as one entry (typically one
@@ -603,16 +624,17 @@ class DicomTagPrinter:
 
         if not json_files:
             self.logger.warning("No JSON files found")
-            return
+            return None
 
         self.logger.info(f"Found {len(json_files)} JSON file(s)")
 
         results = []
-        effective_tags: Optional[List[str]] = list(tags) if tags else None
+        effective_tags: Optional[List[str]] = list(tags) if tags else None # This holds the tags that needs printing
 
         for file_path in json_files:
             tag_values = self.read_json_tags(file_path, effective_tags)
 
+            # Initialize list
             if effective_tags is None:
                 effective_tags = list(tag_values.keys())
 
@@ -622,7 +644,7 @@ class DicomTagPrinter:
             self._inject_subject_id(results, id_globber, path_key='FilePath')
 
         df = self.build_dataframe(results, effective_tags or [], group_by_series=False)
-        self._print_results(df, output_format)
+        return df
 
     # ------------------------------------------------------------------
     # Output formatting
@@ -633,9 +655,9 @@ class DicomTagPrinter:
         if output_format == 'table':
             self._print_table(df)
         elif output_format == 'csv':
-            self._print_csv(df)
+            self.logger.info(df.to_csv(index=False))
         elif output_format == 'json':
-            self._print_json(df)
+            self.logger.info(df.to_dict('records'))
         else:
             raise ValueError(f"Unsupported output format: {output_format}")
 
@@ -665,18 +687,6 @@ class DicomTagPrinter:
         console.print(table)
         console.print(f"\n[bold green]Total: {len(df)} {entity}[/bold green]")
 
-    def _print_csv(self, df: 'pd.DataFrame') -> None:
-        """Print the unified DataFrame in CSV format."""
-        if df.empty:
-            print("# No results to display")
-            return
-        # Use pandas to_csv for correct RFC 4180 quoting (handles commas,
-        # embedded quotes, and newlines in values)
-        print(df.to_csv(index=False), end='')
-
-    def _print_json(self, df: 'pd.DataFrame') -> None:
-        """Print the unified DataFrame in JSON format."""
-        print(json.dumps(df.to_dict('records'), ensure_ascii=False, indent=2))
 
 
 # ------------------------------------------------------------------
@@ -707,7 +717,7 @@ def print_dicom_tags_from_json(input_path: Union[str, Path],
                   :meth:`DicomTagPrinter.print_tags_from_json`
     """
     printer = DicomTagPrinter()
-    printer.print_tags_from_json(input_path, tags, **kwargs)
+    printer.get_tags_from_json(input_path, tags, **kwargs)
 
 
 def validate_tag_format(ctx, param, value):

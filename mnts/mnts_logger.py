@@ -256,6 +256,7 @@ class MNTSLogger(object):
                     soft_wrap=True,
                     width=max(shutil.get_terminal_size().columns, 160),
                     stderr=True,  # Direct to STDERR
+                    force_terminal=True
                 )
                 rich_handler = RichHandler(
                     console=console,
