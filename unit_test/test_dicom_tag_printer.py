@@ -653,6 +653,154 @@ class TestIdGlobber(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# build_dataframe tests
+# ---------------------------------------------------------------------------
+
+class TestBuildDataframe(unittest.TestCase):
+    """Tests for the unified DicomTagPrinter.build_dataframe method."""
+
+    def setUp(self):
+        self.printer = DicomTagPrinter()
+
+    def test_file_view_columns(self):
+        """Non-series mode produces FilePath + tag columns in order."""
+        results = [
+            {'FilePath': '/a/1.dcm', '0008|0060': 'MR', '0010|0020': '001'},
+            {'FilePath': '/a/2.dcm', '0008|0060': 'CT', '0010|0020': '002'},
+        ]
+        df = self.printer.build_dataframe(results, ['0008|0060', '0010|0020'],
+                                          group_by_series=False)
+        self.assertEqual(list(df.columns), ['FilePath', '0008|0060', '0010|0020'])
+        self.assertEqual(len(df), 2)
+        self.assertEqual(df.iloc[0]['FilePath'], '/a/1.dcm')
+        self.assertEqual(df.iloc[1]['0008|0060'], 'CT')
+
+    def test_series_view_columns(self):
+        """Series mode produces SeriesUID/FileCount/RepresentativeFile + tag columns."""
+        results = [
+            {'SeriesUID': 'uid-1', 'FileCount': 10, 'RepresentativeFile': '/a/1.dcm',
+             '0008|103e': 'T2'},
+        ]
+        df = self.printer.build_dataframe(results, ['0008|103e'], group_by_series=True)
+        self.assertEqual(list(df.columns),
+                         ['SeriesUID', 'FileCount', 'RepresentativeFile', '0008|103e'])
+        self.assertEqual(df.iloc[0]['SeriesUID'], 'uid-1')
+        self.assertEqual(df.iloc[0]['FileCount'], 10)
+
+    def test_subject_id_replaces_filepath_as_index(self):
+        """When SubjectID is present it replaces FilePath as the primary index column."""
+        results = [
+            {'FilePath': '/a/NPC001.dcm', 'SubjectID': 'NPC001', '0008|0060': 'MR'},
+        ]
+        df = self.printer.build_dataframe(results, ['0008|0060'],
+                                          group_by_series=False)
+        # SubjectID is the index; FilePath is dropped from the output
+        self.assertEqual(list(df.columns), ['SubjectID', '0008|0060'])
+        self.assertEqual(df.iloc[0]['SubjectID'], 'NPC001')
+
+    def test_missing_value_filled_with_na(self):
+        """Keys absent from a result dict are filled with 'N/A'."""
+        results = [{'FilePath': '/a/1.dcm', '0008|0060': 'MR'}]
+        df = self.printer.build_dataframe(results, ['0008|0060', '9999|9999'],
+                                          group_by_series=False)
+        self.assertEqual(df.iloc[0]['9999|9999'], 'N/A')
+
+    def test_no_duplicate_index_cols_when_tags_overlap(self):
+        """Index columns are never duplicated even if tags list contains them."""
+        results = [{'FilePath': '/a/1.dcm', '0008|0060': 'MR'}]
+        # Malformed tags list includes the index col name — must not duplicate it
+        df = self.printer.build_dataframe(results, ['FilePath', '0008|0060'],
+                                          group_by_series=False)
+        self.assertEqual(list(df.columns).count('FilePath'), 1)
+
+    def test_empty_results_returns_empty_dataframe(self):
+        """Empty results list produces a DataFrame with correct columns but no rows."""
+        df = self.printer.build_dataframe([], ['0008|0060'], group_by_series=False)
+        self.assertEqual(len(df), 0)
+        self.assertIn('FilePath', df.columns)
+        self.assertIn('0008|0060', df.columns)
+
+
+# ---------------------------------------------------------------------------
+# _aggregate_series_tags tests
+# ---------------------------------------------------------------------------
+
+class TestAggregateSeriesTags(unittest.TestCase):
+    """Tests for DicomTagPrinter._aggregate_series_tags numeric summarisation."""
+
+    def setUp(self):
+        self.printer = DicomTagPrinter()
+
+    def _fake_read(self, values_by_tag):
+        """Return a side_effect list for read_dicom_tags calls.
+
+        *values_by_tag* maps tag -> list of values (one per simulated file).
+        """
+        n = max(len(v) for v in values_by_tag.values())
+        calls = []
+        for i in range(n):
+            calls.append({tag: vals[i] for tag, vals in values_by_tag.items()})
+        return calls
+
+    def test_identical_values_shown_once(self):
+        """Tags with the same value across all files show the single value."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm'), Path('/s/3.dcm')]
+        side_effects = self._fake_read({'0008|103e': ['T2', 'T2', 'T2']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0008|103e'])
+        self.assertEqual(result['0008|103e'], 'T2')
+
+    def test_integer_range_shown_as_min_tilde_max(self):
+        """Numeric tags that differ across files are shown as 'min~max'."""
+        files = [Path(f'/s/{i}.dcm') for i in range(5)]
+        values = [str(i + 1) for i in range(5)]  # '1' .. '5'
+        side_effects = self._fake_read({'0020|0013': values})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0020|0013'])
+        self.assertEqual(result['0020|0013'], '1~5')
+
+    def test_float_range_preserved(self):
+        """Non-integer float boundaries are shown with their decimal component."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm')]
+        side_effects = self._fake_read({'0018|0050': ['2.5', '7.5']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0018|0050'])
+        self.assertEqual(result['0018|0050'], '2.5~7.5')
+
+    def test_integer_boundaries_formatted_without_decimal(self):
+        """Integer-valued floats (e.g. 1.0) are shown without decimal point."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm')]
+        side_effects = self._fake_read({'0020|0013': ['1.0', '30.0']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0020|0013'])
+        self.assertEqual(result['0020|0013'], '1~30')
+
+    def test_non_numeric_mixed_uses_representative(self):
+        """Mixed non-numeric values fall back to the first file's value."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm')]
+        side_effects = self._fake_read({'0008|103e': ['T2', 'DWI']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0008|103e'])
+        self.assertEqual(result['0008|103e'], 'T2')
+
+    def test_all_missing_returns_missing(self):
+        """When all files report 'Missing', the aggregated value is 'Missing'."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm')]
+        side_effects = self._fake_read({'9999|9999': ['Missing', 'Missing']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['9999|9999'])
+        self.assertEqual(result['9999|9999'], 'Missing')
+
+    def test_ignores_error_and_missing_sentinels_for_numeric(self):
+        """'Error'/'Missing' sentinels are excluded from numeric range computation."""
+        files = [Path('/s/1.dcm'), Path('/s/2.dcm'), Path('/s/3.dcm')]
+        side_effects = self._fake_read({'0020|0013': ['1', 'Missing', '10']})
+        with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
+            result = self.printer._aggregate_series_tags(files, ['0020|0013'])
+        self.assertEqual(result['0020|0013'], '1~10')
+
+
+# ---------------------------------------------------------------------------
 # Real sample data tests (skipped when files not present)
 # ---------------------------------------------------------------------------
 
@@ -721,7 +869,7 @@ class TestRealJsonSampleData(unittest.TestCase):
             self.assertIn("SubjectID", entry)
             # All sample files follow the subject_NNN naming scheme
             self.assertNotEqual(entry["SubjectID"], "N/A",
-                                msg=f"Failed to extract ID from {entry['FilePath']}")
+                                msg=f"Failed to extract ID from {entry.get('FilePath', entry.get('SubjectID', 'unknown'))}")
 
 
 @unittest.skipIf(_SKIP_NIFTI,
