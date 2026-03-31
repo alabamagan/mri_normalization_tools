@@ -869,7 +869,7 @@ class TestRealJsonSampleData(unittest.TestCase):
             self.assertIn("SubjectID", entry)
             # All sample files follow the subject_NNN naming scheme
             self.assertNotEqual(entry["SubjectID"], "N/A",
-                                msg=f"Failed to extract ID from {entry['FilePath']}")
+                                msg=f"Failed to extract ID from {entry.get('FilePath', entry.get('SubjectID', 'unknown'))}")
 
 
 @unittest.skipIf(_SKIP_NIFTI,
