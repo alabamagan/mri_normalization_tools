@@ -687,14 +687,16 @@ class TestBuildDataframe(unittest.TestCase):
         self.assertEqual(df.iloc[0]['SeriesUID'], 'uid-1')
         self.assertEqual(df.iloc[0]['FileCount'], 10)
 
-    def test_subject_id_included_in_tag_cols(self):
-        """SubjectID from id_globber appears after index columns, before DICOM tags."""
+    def test_subject_id_replaces_filepath_as_index(self):
+        """When SubjectID is present it replaces FilePath as the primary index column."""
         results = [
             {'FilePath': '/a/NPC001.dcm', 'SubjectID': 'NPC001', '0008|0060': 'MR'},
         ]
-        df = self.printer.build_dataframe(results, ['SubjectID', '0008|0060'],
+        df = self.printer.build_dataframe(results, ['0008|0060'],
                                           group_by_series=False)
-        self.assertEqual(list(df.columns), ['FilePath', 'SubjectID', '0008|0060'])
+        # SubjectID is the index; FilePath is dropped from the output
+        self.assertEqual(list(df.columns), ['SubjectID', '0008|0060'])
+        self.assertEqual(df.iloc[0]['SubjectID'], 'NPC001')
 
     def test_missing_value_filled_with_na(self):
         """Keys absent from a result dict are filled with 'N/A'."""
