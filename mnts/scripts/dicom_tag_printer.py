@@ -121,11 +121,6 @@ def dicom_tag_printer_cli(
         >>>  # Read specific tags from JSON files
         >>>  dicom-tag-printer /path/to/json_dir --json-source -t 0008|103e -t 0010|0020
     """
-
-    # Set log level
-    if verbose:
-        MNTSLogger.set_global_log_level('debug')
-
     # Print configuration if verbose
     if verbose:
         click.echo("Configuration:")
@@ -142,7 +137,7 @@ def dicom_tag_printer_cli(
         click.echo()
 
     try:
-        printer = DicomTagPrinter(backend=backend)
+        printer = DicomTagPrinter(backend=backend, verbose=verbose)
         if json_source:
             # For json tag list is option, print all if not provided.
             tag_list = list(tags) if tags else None

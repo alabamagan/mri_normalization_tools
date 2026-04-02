@@ -75,12 +75,19 @@ class DicomTagPrinter:
     Supports both pydicom and SimpleITK as backend engines.
 
     Args:
-        backend (str): Backend engine to use, 'pydicom' or 'sitk' or 'auto'
-        logger: Logger instance for logging information
+        backend (str):
+            Backend engine to use, 'pydicom' or 'sitk' or 'auto'
+        logger (MNTSLogger):
+            Logger instance for logging information
+        verbose (bool, optional):
+            Put logger in debug level if true
     """
 
-    def __init__(self, backend: str = 'auto', logger=None):
+    def __init__(self, backend: str = 'auto', logger=None, verbose=False):
         self.logger = logger or MNTSLogger['DicomTagPrinter']
+        if verbose:
+            MNTSLogger.set_global_log_level('debug')
+            self.logger.debug("Confirm log level set to debug.")
 
         if backend == 'auto':
             if PYDICOM_AVAILABLE:
@@ -234,20 +241,10 @@ class DicomTagPrinter:
                 found.append(input_path)
         elif input_path.is_dir():
             if recursive:
-                try:
-                    # recursive_list_dir returns every directory that has files
-                    # directly inside it; use non-recursive glob on each to
-                    # avoid double-counting files in nested directories.
-                    dirs = recursive_list_dir(max_depth, str(input_path))
-                    for dir_path in dirs:
-                        for fp in Path(dir_path).glob(glob_pattern):
-                            if fp.is_file() and predicate(fp):
-                                found.append(fp)
-                except Exception as e:
-                    self.logger.warning(f"Failed to use recursive_list_dir, using rglob: {e}")
-                    for fp in input_path.rglob(glob_pattern):
-                        if fp.is_file() and predicate(fp):
-                            found.append(fp)
+                for fp in input_path.rglob(glob_pattern):
+                    self.logger.deug(f"Scanning: {str(fp)}")
+                    if fp.is_file() and predicate(fp):
+                        found.append(fp)
             else:
                 for fp in input_path.iterdir():
                     if fp.is_file() and predicate(fp):
