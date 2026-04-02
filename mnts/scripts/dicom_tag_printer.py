@@ -144,16 +144,57 @@ def dicom_tag_printer_cli(
         else:
             tag_list = list(tags)
 
-        if tag_list[0] == 'default':
-            tag_list = [
-                           "0008|103e",
-                           "0010|0020",
-                           "0020|0011",
-                           "0008|0020",
-                           "0020|000e",
-                           "0008|0060",
-                           "0018|0050"
-                       ] + tag_list[1:]
+        map = {
+            'default': [
+                "0008|103e",  # Series Description
+                "0010|0020",  # Patient ID
+                "0020|0011",  # Series Number
+                "0008|0020",  # Study Date
+                "0020|000e",  # Series Instance UID
+                "0008|0060",  # Modality
+                "0018|0050",  # Slice Thickness
+            ],
+            'mri': [
+                "0018|0080",  # Repetition Time (TR)
+                "0018|0081",  # Echo Time (TE)
+                "0018|0082",  # Inversion Time (TI)
+                "0018|0083",  # Number of Averages (NEX)
+                "0018|0084",  # Imaging Frequency
+                "0018|0085",  # Imaged Nucleus
+                "0018|0086",  # Echo Number(s)
+                "0018|0087",  # Magnetic Field Strength
+                "0018|0088",  # Spacing Between Slices
+                "0018|0089",  # Number of Phase Encoding Steps
+                "0018|0091",  # Echo Train Length
+                "0018|0093",  # Percent Sampling
+                "0018|0094",  # Percent Phase Field of View
+                "0018|0095",  # Pixel Bandwidth
+                "0018|1088",  # Heart Rate
+                "0018|1160",  # SAR (Specific Absorption Rate)
+                "0018|1250",  # Receive Coil Name
+                "0018|1251",  # Transmit Coil Name
+                "0018|1310",  # Acquisition Matrix
+                "0018|1312",  # In-plane Phase Encoding Direction
+                "0018|1314",  # Flip Angle
+                "0018|0020",  # Scanning Sequence
+                "0018|0021",  # Sequence Variant
+                "0018|0022",  # Scan Options
+                "0018|0023",  # MR Acquisition Type
+                "0018|0024",  # Sequence Name
+                "0028|0010",  # Rows
+                "0028|0011",  # Columns
+                "0028|0030",  # Pixel Spacing
+                "0008|0070",  # Manufacturer
+                "0008|1090",  # Manufacturer's Model Name
+            ]
+        }
+
+        real_tag_list = []
+        for tag in tag_list:
+            if tag in map:
+                real_tag_list.extend(map[tag])
+            else:
+                real_tag_list.append(tag)
 
         if json_source:
             tags = printer.get_tags_from_json(
@@ -169,18 +210,7 @@ def dicom_tag_printer_cli(
             if not tags:
                 raise click.UsageError("At least one --tags / -t option is required when reading DICOM files.")
 
-            tag_list = list(tags)
-            if tag_list[0] == 'default':
-                tag_list = [
-                    "0008|103e",
-                    "0010|0020",
-                    "0020|0011",
-                    "0008|0020",
-                    "0020|000e",
-                    "0008|0060",
-                    "0018|0050"
-                ] + tag_list[1:]
-
+            tag_list = real_tag_list
             tags = printer.get_dataframe(
                 input_path=input_path,
                 tags=tag_list,

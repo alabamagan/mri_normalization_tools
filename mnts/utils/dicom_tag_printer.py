@@ -801,6 +801,11 @@ class DicomTagPrinter:
             self._inject_subject_id(results, id_globber, path_key)
 
         df = self.build_dataframe(results, tags, group_by_series)
+        if 'SubjectID' in df.columns:
+            df = df.sort_values('SubjectID')
+        if 'Series Number' in df.columns and 'SubjectID' in df.columns:
+            df.set_index(['SubjectID', 'Series Number'], inplace=True)
+            df.sort_index(inplace=True)
         self._print_results(df, output_format)
         return df
 
@@ -929,6 +934,8 @@ def validate_tag_format(ctx, param, value):
     """Validate DICOM tag format"""
     if value:
         for tag in value:
-            if not re.match(r'^[0-9a-fA-F]{4}\|[0-9a-fA-F]{4}$', tag) and not tag == 'default':
+            if tag in ('default', 'mri'):
+                continue
+            if not re.match(r'^[0-9a-fA-F]{4}\|[0-9a-fA-F]{4}$', tag):
                 raise click.BadParameter(f"Invalid tag format: {tag}. Format should be XXXX|XXXX (e.g., 0008|103e)")
     return value
