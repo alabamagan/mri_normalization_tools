@@ -55,6 +55,7 @@ class MNTSLogger(object):
 
     """
     global_logger = 'Init'
+    global_console = None
     all_loggers = {}
     log_levels = {
         'debug': logging.DEBUG,
@@ -106,6 +107,10 @@ class MNTSLogger(object):
                                            log_level=log_level,
                                            keep_file=keep_file)
             cls.is_verbose = cls.global_logger._verbose
+            if cls.global_logger.use_rich_stream:
+                # if rich-handler is use, put out a global console
+                cls.global_console = cls.global_logger._console
+            # Hook uncaught exception to logger system
             cls.global_logger.sys_hook = sys.excepthook
             sys.excepthook = cls.global_logger.exception_hook
             cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
@@ -154,6 +159,7 @@ class MNTSLogger(object):
         self._keep_file = keep_file
         self._logger_name = logger_name
         self._log_level = str(log_level).lower()
+        self._console = None
 
         assert self._log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
             list(self.log_levels.keys()), log_level
@@ -222,14 +228,18 @@ class MNTSLogger(object):
         """
         if is_file_handler and self._keep_file:
             assert self._log_file is not None
-            # This "console" writes to the log file
-            console = Console(
-                color_system="truecolor",
-                soft_wrap=True,
-                width=max(shutil.get_terminal_size().columns, 160),
-                file=self._log_file,
-                highlight=self.use_rich_file
-            )
+            if MNTSLogger.global_console is None:
+                # This "console" writes to the log file
+                console = Console(
+                    color_system="truecolor",
+                    soft_wrap=True,
+                    width=max(shutil.get_terminal_size().columns, 160),
+                    file=self._log_file,
+                    highlight=self.use_rich_file
+                )
+                self._console = console
+            else:
+                self._console = MNTSLogger.global_console
             try:
                 rich_handler = RichHandler(
                     console=console,
