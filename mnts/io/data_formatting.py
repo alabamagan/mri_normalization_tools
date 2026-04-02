@@ -266,7 +266,9 @@ class Dcm2NiiConverter:
         }
         for dctag in tags:
             try:
-                tags[dctag] = headerreader.GetMetaData(dctag).rstrip().rstrip(' ')
+                tag_value = headerreader.GetMetaData(dctag).rstrip().rstrip(' ')
+                # Clean up invalid UTF-8 characters
+                tags[dctag] = tag_value.encode('utf-8', errors='replace').decode('utf-8')
             except RuntimeError:
                 self.logger.warning(f"Tag [{dctag}] missing for image {dcm_files[0]}")
                 tags[dctag] = 'Missing'
@@ -556,11 +558,10 @@ def dicom2nii(folder: str,
     See Also:
         :class:`Dcm2NiiConvertre`
     """
-
-    workerid = mpi.current_process().name
-    logger = MNTSLogger['utils.dicom2nii-%s'%workerid]
-    logger.info(f"Handling: {folder}")
     try:
+        # workerid = mpi.current_process().name
+        # logger = MNTSLogger['utils.dicom2nii-%s'%workerid]
+        # logger.info(f"Handling: {folder}")
         converter = Dcm2NiiConverter(folder,
                                      out_dir=out_dir,
                                      seq_filters=seq_filters,
@@ -578,7 +579,7 @@ def dicom2nii(folder: str,
                                      custom_filename_format=custom_filename_format)
         converter.Execute()
     except Exception as e:
-        logger.exception(e)
+        MNTSLogger.global_logger.exception(e)
         return 1
 
 
@@ -626,7 +627,7 @@ def batch_dicom2nii(folderlist, out_dir,
                 for future in as_completed(futures):
                     f = futures[future]
                     try:
-                        future.result(timeout=60*15)  # fifteen min
+                        future.result(timeout=60)  # fifteen min
                         logger.info(f"Completed: {f}")
                     except TimeoutError:
                         logger.error(f"Task timeout for {f}")
