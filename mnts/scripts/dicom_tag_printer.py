@@ -48,10 +48,10 @@ import sys
     help='DICOM reading backend (default: auto)'
 )
 @click.option(
-    '-d', '--max-depth',
+    '-w', '--max-workers',
     type=int,
-    default=10,
-    help='Maximum search depth (default: 10)'
+    default=None,
+    help='Max parallel threads for file scanning and tag reading (default: auto)'
 )
 @click.option(
     '--json-source',
@@ -82,7 +82,7 @@ def dicom_tag_printer_cli(
         group_by_series: bool,
         format: str,
         backend: str,
-        max_depth: int,
+        max_workers: int,
         json_source: bool,
         id_globber: str,
         verbose: bool
@@ -133,7 +133,7 @@ def dicom_tag_printer_cli(
             click.echo(f"  Backend: {backend}")
         click.echo(f"  ID globber: {id_globber or '(none)'}")
         click.echo(f"  Output format: {format}")
-        click.echo(f"  Max depth: {max_depth}")
+        click.echo(f"  Max workers: {max_workers or '(auto)'}")
         click.echo()
 
     try:
@@ -161,7 +161,6 @@ def dicom_tag_printer_cli(
                 tags=tag_list,
                 recursive=recursive,
                 output_format=format,
-                max_depth=max_depth,
                 id_globber=id_globber,
             )
             printer._print_results(tags, format)
@@ -188,8 +187,8 @@ def dicom_tag_printer_cli(
                 recursive=recursive,
                 group_by_series=group_by_series,
                 output_format=format,
-                max_depth=max_depth,
                 id_globber=id_globber,
+                max_workers=max_workers,
             )
 
         if output.is_dir():

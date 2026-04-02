@@ -12,12 +12,14 @@ Author: MRI Normalization Tools
 import os
 import re
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Union, Optional, Any
 from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
 from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 try:
     import pandas as pd
@@ -45,7 +47,6 @@ except ImportError:
     SITK_AVAILABLE = False
 
 from ..mnts_logger import MNTSLogger
-from .preprocessing import recursive_list_dir
 from ..io.data_formatting import pydicom_read_series
 
 __all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format', 'print_dicom_tags_from_json']
@@ -217,54 +218,94 @@ class DicomTagPrinter:
     # File discovery
     # ------------------------------------------------------------------
 
-    def _find_files(self, input_path: Union[str, Path], predicate,
-                    glob_pattern: str, recursive: bool, max_depth: int) -> List[Path]:
-        """Generic file finder with recursive_list_dir and rglob fallback.
+    @staticmethod
+    def _list_candidate_files(input_path: Path, glob_pattern: str,
+                              recursive: bool) -> List[Path]:
+        """Collect candidate file paths from *input_path*.
+
+        This is the first (fast) phase of file discovery — it enumerates paths
+        using :py:meth:`Path.rglob` or :py:meth:`Path.iterdir` without
+        performing any expensive content-based checks.
 
         Args:
             input_path: File or directory to search.
-            predicate: Callable[[Path], bool] — returns True for files to include.
-            glob_pattern: Pattern passed to Path.glob() when iterating
-                directories returned by recursive_list_dir (e.g. ``'*'`` or
-                ``'*.json'``).
+            glob_pattern: Glob pattern for ``rglob`` / ``iterdir`` filtering
+                (e.g. ``'*'`` or ``'*.json'``).
             recursive: Whether to descend into subdirectories.
-            max_depth: Maximum depth passed to recursive_list_dir.
 
         Returns:
-            Sorted list of matching file paths.
+            List of candidate file paths (unsorted).
         """
-        input_path = Path(input_path)
-        found = []
-
         if input_path.is_file():
-            if predicate(input_path):
-                found.append(input_path)
-        elif input_path.is_dir():
-            if recursive:
-                for fp in input_path.rglob(glob_pattern):
-                    self.logger.deug(f"Scanning: {str(fp)}")
-                    if fp.is_file() and predicate(fp):
-                        found.append(fp)
-            else:
-                for fp in input_path.iterdir():
-                    if fp.is_file() and predicate(fp):
-                        found.append(fp)
+            return [input_path]
 
-        return sorted(found)
+        if not input_path.is_dir():
+            return []
 
-    def find_dicom_files(self, input_path: Union[str, Path], recursive: bool = True,
-                         max_depth: int = 10) -> List[Path]:
-        """Find DICOM files.
+        if recursive:
+            return [fp for fp in input_path.rglob(glob_pattern) if fp.is_file()]
+        else:
+            return [fp for fp in input_path.iterdir()
+                    if fp.is_file() and fp.match(glob_pattern)]
+
+    def find_dicom_files(self, input_path: Union[str, Path],
+                         recursive: bool = True,
+                         max_workers: Optional[int] = None) -> List[Path]:
+        """Find DICOM files, using multi-threaded ``is_dicom_file`` checks.
+
+        The discovery runs in two phases:
+
+        1. **Enumerate** candidate paths via :pymethod:`Path.rglob` (fast, I/O
+           only).
+        2. **Filter** candidates through :pymethod:`is_dicom_file` in parallel
+           using a :class:`~concurrent.futures.ThreadPoolExecutor`.
+
+        A Rich progress bar is displayed during the filtering phase.
 
         Args:
-            input_path: Input path (file or directory)
-            recursive: Whether to search recursively
-            max_depth: Maximum search depth
+            input_path: Input path (file or directory).
+            recursive: Whether to search recursively.
+            max_workers: Thread-pool size (``None`` = executor default).
 
         Returns:
-            List of DICOM file paths
+            Sorted list of DICOM file paths.
         """
-        return self._find_files(input_path, self.is_dicom_file, '*', recursive, max_depth)
+        input_path = Path(input_path)
+        candidates = self._list_candidate_files(input_path, '*', recursive)
+
+        if not candidates:
+            return []
+
+        self.logger.debug(f"Collected {len(candidates)} candidate files, "
+                          f"filtering with is_dicom_file …")
+
+        found: List[Path] = []
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Scanning for DICOM files …",
+                                     total=len(candidates))
+
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                future_to_path = {
+                    pool.submit(self.is_dicom_file, fp): fp
+                    for fp in candidates
+                }
+                for future in as_completed(future_to_path):
+                    fp = future_to_path[future]
+                    try:
+                        if future.result():
+                            found.append(fp)
+                    except Exception:
+                        self.logger.debug(f"is_dicom_file raised for {fp}")
+                    progress.advance(task)
+
+        return sorted(found)
 
     def is_dicom_file(self, file_path: Path) -> bool:
         """Check if file is DICOM format.
@@ -298,25 +339,21 @@ class DicomTagPrinter:
 
         return False
 
-    def find_json_files(self, input_path: Union[str, Path], recursive: bool = True,
-                        max_depth: int = 10) -> List[Path]:
-        """Find .json files in a directory.
+    def find_json_files(self, input_path: Union[str, Path],
+                        recursive: bool = True) -> List[Path]:
+        """Find ``.json`` files in a directory.
 
         Args:
-            input_path: Input path (file or directory)
-            recursive: Whether to search recursively
-            max_depth: Maximum search depth
+            input_path: Input path (file or directory).
+            recursive: Whether to search recursively.
 
         Returns:
-            List of .json file paths
+            Sorted list of ``.json`` file paths.
         """
-        return self._find_files(
-            input_path,
-            lambda p: p.suffix.lower() == '.json',
-            '*.json',
-            recursive,
-            max_depth,
-        )
+        input_path = Path(input_path)
+        candidates = self._list_candidate_files(input_path, '*.json', recursive)
+        # For JSON the suffix check is cheap — no need for threading.
+        return sorted(fp for fp in candidates if fp.suffix.lower() == '.json')
 
     # ------------------------------------------------------------------
     # Grouping & aggregation
@@ -533,18 +570,22 @@ class DicomTagPrinter:
 
     def print_tags(self, input_path: Union[str, Path], tags: List[str],
                    recursive: bool = True, group_by_series: bool = True,
-                   output_format: str = 'table', max_depth: int = 10,
+                   output_format: str = 'table',
                    id_globber: Optional[str] = None,
-                   summarize_numeric: bool = False) -> None:
+                   summarize_numeric: bool = False,
+                   max_workers: Optional[int] = None) -> None:
         """Print DICOM tag information.
 
+        File discovery and tag reading are both parallelised with a
+        :class:`~concurrent.futures.ThreadPoolExecutor`.  A Rich progress bar
+        is shown during the reading phase.
+
         Args:
-            input_path: Input path
-            tags: List of tags to print
-            recursive: Whether to search recursively
-            group_by_series: Whether to group by series
-            output_format: Output format ('table', 'csv', 'json')
-            max_depth: Maximum search depth
+            input_path: Input path.
+            tags: List of tags to print.
+            recursive: Whether to search recursively.
+            group_by_series: Whether to group by series.
+            output_format: Output format (``'table'``, ``'csv'``, ``'json'``).
             id_globber: Optional regex pattern to extract a subject/case ID from
                 each file path.  When supplied, ``SubjectID`` replaces the file
                 path or series UID as the primary index column.
@@ -552,11 +593,13 @@ class DicomTagPrinter:
                 ``True``, all files in each series are read and numeric tags are
                 summarised as ``"min~max"`` ranges instead of only showing the
                 representative file's value.
+            max_workers: Thread-pool size for parallel I/O (``None`` = default).
         """
         self.logger.info(f"Processing: {input_path}")
         self.logger.info(f"Tags to read: {tags}")
 
-        dicom_files = self.find_dicom_files(input_path, recursive, max_depth)
+        dicom_files = self.find_dicom_files(input_path, recursive,
+                                            max_workers=max_workers)
 
         if not dicom_files:
             self.logger.warning("No DICOM files found")
@@ -564,28 +607,63 @@ class DicomTagPrinter:
 
         self.logger.info(f"Found {len(dicom_files)} DICOM files")
 
-        results = []
+        results: List[Dict] = []
 
         if group_by_series:
             series_groups = self.group_by_series(dicom_files)
             self.logger.info(f"Found {len(series_groups)} series")
 
-            for series_uid, files in series_groups.items():
+            def _read_series(item):
+                series_uid, files = item
                 if summarize_numeric and len(files) > 1:
-                    tag_values = self._aggregate_series_tags(files, tags)
+                    tv = self._aggregate_series_tags(files, tags)
                 else:
-                    tag_values = self.read_dicom_tags(files[0], tags)
-
-                results.append({
+                    tv = self.read_dicom_tags(files[0], tags)
+                return {
                     'SeriesUID': series_uid,
                     'FileCount': len(files),
                     'RepresentativeFile': str(files[0]),
-                    **tag_values,
-                })
+                    **tv,
+                }
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Reading series tags …",
+                                         total=len(series_groups))
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {
+                        pool.submit(_read_series, item): item
+                        for item in series_groups.items()
+                    }
+                    for future in as_completed(futures):
+                        results.append(future.result())
+                        progress.advance(task)
         else:
-            for file_path in dicom_files:
-                tag_values = self.read_dicom_tags(file_path, tags)
-                results.append({'FilePath': str(file_path), **tag_values})
+            # File-by-file parallel read
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Reading DICOM tags …",
+                                         total=len(dicom_files))
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    future_to_path = {
+                        pool.submit(self.read_dicom_tags, fp, tags): fp
+                        for fp in dicom_files
+                    }
+                    for future in as_completed(future_to_path):
+                        fp = future_to_path[future]
+                        tag_values = future.result()
+                        results.append({'FilePath': str(fp), **tag_values})
+                        progress.advance(task)
 
         if id_globber:
             path_key = 'RepresentativeFile' if group_by_series else 'FilePath'
@@ -597,27 +675,25 @@ class DicomTagPrinter:
     def get_tags_from_json(self, input_path: Union[str, Path],
                            tags: Optional[List[str]] = None,
                            recursive: bool = True, output_format: str = 'table',
-                           max_depth: int = 10,
-                           id_globber: Optional[str] = None) -> pd.DataFrame | None:
-        """Print DICOM tag information sourced from a directory of JSON files.
+                           id_globber: Optional[str] = None) -> 'pd.DataFrame | None':
+        """Read DICOM tag information from a directory of JSON files.
 
         Each JSON file in *input_path* is treated as one entry (typically one
         series) and must contain DICOM tags as ``"XXXX|XXXX": "value"`` pairs.
 
         Args:
-            input_path: Path to a single JSON file or a directory of JSON files
+            input_path: Path to a single JSON file or a directory of JSON files.
             tags: List of tags to display.  When ``None`` or empty, all tags
                   found in the first JSON file are used as the column set.
-            recursive: Whether to search subdirectories for JSON files
-            output_format: Output format (``'table'``, ``'csv'``, or ``'json'``)
-            max_depth: Maximum directory search depth
+            recursive: Whether to search subdirectories for JSON files.
+            output_format: Output format (``'table'``, ``'csv'``, or ``'json'``).
             id_globber: Optional regex pattern to extract a subject/case ID from
                 each JSON file's name.  When supplied, ``SubjectID`` replaces the
                 file path as the primary index column.
         """
         self.logger.info(f"Processing JSON source: {input_path}")
 
-        json_files = self.find_json_files(input_path, recursive, max_depth)
+        json_files = self.find_json_files(input_path, recursive)
 
         if not json_files:
             self.logger.warning("No JSON files found")
@@ -626,12 +702,12 @@ class DicomTagPrinter:
         self.logger.info(f"Found {len(json_files)} JSON file(s)")
 
         results = []
-        effective_tags: Optional[List[str]] = list(tags) if tags else None # This holds the tags that needs printing
+        effective_tags: Optional[List[str]] = list(tags) if tags else None
 
         for file_path in json_files:
             tag_values = self.read_json_tags(file_path, effective_tags)
 
-            # Initialize list
+            # Initialize list from first file when no tags were requested
             if effective_tags is None:
                 effective_tags = list(tag_values.keys())
 
