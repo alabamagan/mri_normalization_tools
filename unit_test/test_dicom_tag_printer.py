@@ -64,6 +64,44 @@ _rich_progress.MofNCompleteColumn = MagicMock
 _click = _make_stub('click')
 _click.BadParameter = Exception
 
+# Replace ProcessPoolExecutor with a synchronous executor so that the
+# module-level worker functions run in-process (stubs can't be pickled).
+import concurrent.futures as _cf
+
+class _SyncFuture:
+    """Minimal Future that stores a pre-computed result."""
+    def __init__(self, fn, *a, **kw):
+        try:
+            self._result = fn(*a, **kw)
+            self._exc = None
+        except Exception as e:
+            self._result = None
+            self._exc = e
+
+    def result(self):
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+class _SyncExecutor:
+    """Drop-in replacement for ProcessPoolExecutor that runs synchronously."""
+    def __init__(self, *a, **kw): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def submit(self, fn, *a, **kw):
+        return _SyncFuture(fn, *a, **kw)
+
+_cf.ProcessPoolExecutor = _SyncExecutor
+
+# Patch as_completed to work with _SyncFuture (just yield the keys)
+_original_as_completed = _cf.as_completed
+def _sync_as_completed(fs, timeout=None):
+    if isinstance(fs, dict):
+        yield from fs.keys()
+    else:
+        yield from fs
+_cf.as_completed = _sync_as_completed
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
