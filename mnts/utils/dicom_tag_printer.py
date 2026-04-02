@@ -621,13 +621,22 @@ class DicomTagPrinter:
                 (``'FilePath'`` or ``'RepresentativeFile'``).
         """
         for result in results:
-            path_str = result.get(path_key, '')
-            mo = re.search(id_globber, Path(path_str).name)
+            path = Path(result.get(path_key, ''))
+            # Search for file name if json mode
+            if path.suffix == '.json':
+                mo = re.search(id_globber, path.name)
+            else: # otherwise assume pydicom is used and glob from ID or parent
+                id_str = result.get('0010|0020', '')
+                parents = list(path.parents)
+                for _s in parents + [id_str]:
+                    _s = _s.name if isinstance(_s, Path) else str(_s)
+                    mo = re.fullmatch(id_globber, _s)
+                    if mo:
+                        break
             if mo:
                 result['SubjectID'] = mo.group(1) if mo.lastindex else mo.group()
             else:
                 result['SubjectID'] = 'N/A'
-
     # ------------------------------------------------------------------
     # Unified DataFrame construction
     # ------------------------------------------------------------------
@@ -664,7 +673,7 @@ class DicomTagPrinter:
         has_subject_id = bool(results) and 'SubjectID' in results[0]
 
         if has_subject_id:
-            index_cols = ['SubjectID', 'FileCount'] if group_by_series else ['SubjectID']
+            index_cols = ['SubjectID', 'FileCount', 'RepresentativeFile'] if group_by_series else ['SubjectID']
         elif group_by_series:
             index_cols = ['SeriesUID', 'FileCount', 'RepresentativeFile']
         else:
@@ -683,12 +692,12 @@ class DicomTagPrinter:
     # Public entry points
     # ------------------------------------------------------------------
 
-    def print_tags(self, input_path: Union[str, Path], tags: List[str],
-                   recursive: bool = True, group_by_series: bool = True,
-                   output_format: str = 'table',
-                   id_globber: Optional[str] = None,
-                   summarize_numeric: bool = False,
-                   max_workers: Optional[int] = None) -> None:
+    def get_dataframe(self, input_path: Union[str, Path], tags: List[str],
+                      recursive: bool = True, group_by_series: bool = True,
+                      output_format: str = 'table',
+                      id_globber: Optional[str] = None,
+                      summarize_numeric: bool = False,
+                      max_workers: Optional[int] = None) -> None:
         """Print DICOM tag information.
 
         File discovery and tag reading are both parallelised with a
@@ -737,7 +746,7 @@ class DicomTagPrinter:
                 MofNCompleteColumn(),
                 transient=True,
             ) as progress:
-                task = progress.add_task("Reading series tags …",
+                task = progress.add_task("Reading series tags ...",
                                          total=len(series_groups))
                 with ProcessPoolExecutor(max_workers=max_workers) as pool:
                     futures = {}
@@ -771,7 +780,7 @@ class DicomTagPrinter:
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 MofNCompleteColumn(),
-                transient=True,
+                transient=True
             ) as progress:
                 task = progress.add_task("Reading DICOM tags …",
                                          total=len(dicom_files))
@@ -793,6 +802,7 @@ class DicomTagPrinter:
 
         df = self.build_dataframe(results, tags, group_by_series)
         self._print_results(df, output_format)
+        return df
 
     def get_tags_from_json(self, input_path: Union[str, Path],
                            tags: Optional[List[str]] = None,
@@ -897,7 +907,7 @@ def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) ->
         **kwargs: Additional arguments passed to DicomTagPrinter.print_tags
     """
     printer = DicomTagPrinter()
-    printer.print_tags(input_path, tags, **kwargs)
+    printer.get_dataframe(input_path, tags, **kwargs)
 
 
 def print_dicom_tags_from_json(input_path: Union[str, Path],

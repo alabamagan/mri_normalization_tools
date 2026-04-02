@@ -15,6 +15,7 @@ from mnts.io.dixon import DIXON_dcm_to_images
 from typing import Optional, Union, List, Tuple, Iterable, Dict
 from ..mnts_logger import MNTSLogger
 from tqdm.auto import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 
 def parse_custom_filename_format(format_string: str, all_dicom_tags: Dict[str, str], logger) -> str:
@@ -603,18 +604,36 @@ def batch_dicom2nii(folderlist, out_dir,
     logger = MNTSLogger['mpi_dicom2nii']
 
     if workers is not None and workers > 1:
-        pool = mpi.Pool(workers)
-        for f in folderlist:
-            logger.info(f"Creating job for: {f}.")
-            func = partial(dicom2nii,
-                           out_dir = out_dir,
-                           **kwargs
-                           )
-            # dicom2nii(f, out_dir, seq_filters, idglobber, use_patient_id,use_top_level_fname, input, idlist)
-            # func(f)
-            pool.apply_async(func, args=[f])
-        pool.close()
-        pool.join()
+        from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
+
+        func = partial(dicom2nii,
+                       out_dir=out_dir,
+                       **kwargs)
+
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(func, f): f for f in folderlist}
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+                console=MNTSLogger.global_console
+            ) as progress:
+                task = progress.add_task("Reading from source directory ...", total=len(folderlist))
+
+                for future in as_completed(futures):
+                    f = futures[future]
+                    try:
+                        future.result(timeout=60*15)  # fifteen min
+                        logger.info(f"Completed: {f}")
+                    except TimeoutError:
+                        logger.error(f"Task timeout for {f}")
+                    except Exception as e:
+                        logger.exception(f"Error processing {f}: {e}")
+                    finally:
+                        progress.advance(task)
     else:
         for f in folderlist:
             dicom2nii(f, out_dir=out_dir, **kwargs)

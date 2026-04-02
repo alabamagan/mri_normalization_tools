@@ -228,18 +228,14 @@ class MNTSLogger(object):
         """
         if is_file_handler and self._keep_file:
             assert self._log_file is not None
-            if MNTSLogger.global_console is None:
-                # This "console" writes to the log file
-                console = Console(
-                    color_system="truecolor",
-                    soft_wrap=True,
-                    width=max(shutil.get_terminal_size().columns, 160),
-                    file=self._log_file,
-                    highlight=self.use_rich_file
-                )
-                self._console = console
-            else:
-                self._console = MNTSLogger.global_console
+            # This "console" writes to the log file
+            console = Console(
+                color_system="truecolor",
+                soft_wrap=True,
+                width=max(shutil.get_terminal_size().columns, 160),
+                file=self._log_file,
+                highlight=self.use_rich_file
+            )
             try:
                 rich_handler = RichHandler(
                     console=console,
@@ -261,13 +257,18 @@ class MNTSLogger(object):
                 return handler
         else:
             if self.use_rich_stream:
-                console = Console(
-                    color_system="truecolor",
-                    soft_wrap=True,
-                    width=max(shutil.get_terminal_size().columns, 160),
-                    stderr=True,  # Direct to STDERR
-                    force_terminal=True
-                )
+                if not MNTSLogger.global_console is None:
+                    console = Console(
+                        color_system="truecolor",
+                        soft_wrap=True,
+                        width=max(shutil.get_terminal_size().columns, 160),
+                        stderr=True,  # Direct to STDERR
+                        force_terminal=True
+                    )
+                    self._console = console
+                else:
+                    console = MNTSLogger.global_console
+                    self._console = console
                 rich_handler = RichHandler(
                     console=console,
                     rich_tracebacks=True,

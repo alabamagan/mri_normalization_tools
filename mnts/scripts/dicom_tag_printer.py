@@ -12,7 +12,7 @@ import sys
 )
 @click.option(
     '-o', '--output',
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(writable=True, path_type=Path),
     required=False,
     default=Path('.')
 )
@@ -181,7 +181,7 @@ def dicom_tag_printer_cli(
                     "0018|0050"
                 ] + tag_list[1:]
 
-            tags = printer.print_tags(
+            tags = printer.get_dataframe(
                 input_path=input_path,
                 tags=tag_list,
                 recursive=recursive,
@@ -191,15 +191,16 @@ def dicom_tag_printer_cli(
                 max_workers=max_workers,
             )
 
+        # Default name if outputing to a directory
         if output.is_dir():
             output = output / 'print_dcm_tags'
 
         if format == 'csv' and tags is not None:
-            printer.logger.info(f"Writing to to: {output.with_suffix('.csv')}")
+            printer.logger.info(f"Writing to: {output.with_suffix('.csv')}")
             tags.to_csv(output.with_suffix('.csv'))
         elif format == 'json':
             printer.logger.warning(f"This path of outputing json is not verified")
-            printer.logger.info(f"Writing to to: {output.with_suffix('.json')}")
+            printer.logger.info(f"Writing to: {output.with_suffix('.json')}")
             json.dumps(tags.to_dict('records'), ensure_ascii=False, indent=2)
 
     except KeyboardInterrupt:
