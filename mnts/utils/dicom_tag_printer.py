@@ -12,7 +12,7 @@ Author: MRI Normalization Tools
 import os
 import re
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Union, Optional, Any
 from collections import defaultdict
@@ -67,6 +67,119 @@ _COL_STYLES = {
     'FilePath':           dict(style="cyan", no_wrap=False, max_width=50),
 }
 _DEFAULT_TAG_STYLE = dict(style="yellow", no_wrap=False)
+
+
+# ------------------------------------------------------------------
+# Module-level worker functions for ProcessPoolExecutor
+# (Instance methods are not picklable, so multiprocessing needs these)
+# ------------------------------------------------------------------
+
+def _is_dicom_file_worker(file_path: Path, backend: str) -> bool:
+    """Return ``True`` if *file_path* is a readable DICOM file.
+
+    Designed to run in a child process — imports are done locally so the
+    worker is self-contained and picklable.
+    """
+    try:
+        if file_path.suffix.lower() in ['.dcm', '.dicom']:
+            return True
+
+        if backend == 'pydicom':
+            try:
+                import pydicom as _pd
+                _pd.dcmread(file_path, stop_before_pixels=True)
+                return True
+            except Exception:
+                return False
+        elif backend == 'sitk':
+            try:
+                import SimpleITK as _sitk
+                reader = _sitk.ImageFileReader()
+                reader.SetFileName(str(file_path))
+                reader.ReadImageInformation()
+                return True
+            except Exception:
+                return False
+    except Exception:
+        pass
+    return False
+
+
+def _read_dicom_tags_worker(file_path: Path, tags: List[str],
+                            backend: str) -> Dict[str, str]:
+    """Read DICOM tags from a single file.
+
+    Standalone version of :pymeth:`DicomTagPrinter.read_dicom_tags` that can
+    run in a child process.
+    """
+    if backend == 'pydicom':
+        try:
+            import pydicom as _pd
+            ds = _pd.dcmread(file_path, stop_before_pixels=True, force=True)
+            result = {}
+            for tag_str in tags:
+                try:
+                    group, element = tag_str.split('|')
+                    tag = _pd.tag.Tag(int(group, 16), int(element, 16))
+                    if tag in ds:
+                        result[tag_str] = str(ds[tag].value).strip()
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception:
+                    result[tag_str] = 'Error'
+            return result
+        except Exception:
+            return {tag: 'Error' for tag in tags}
+    else:
+        try:
+            import SimpleITK as _sitk
+            reader = _sitk.ImageFileReader()
+            reader.SetFileName(str(file_path))
+            reader.LoadPrivateTagsOn()
+            reader.ReadImageInformation()
+            result = {}
+            for tag_str in tags:
+                try:
+                    if reader.HasMetaDataKey(tag_str):
+                        result[tag_str] = reader.GetMetaData(tag_str).strip()
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception:
+                    result[tag_str] = 'Error'
+            return result
+        except Exception:
+            return {tag: 'Error' for tag in tags}
+
+
+def _aggregate_series_tags_worker(files: List[Path], tags: List[str],
+                                  backend: str) -> Dict[str, str]:
+    """Aggregate tag values across all files in a single series.
+
+    Standalone version of :pymeth:`DicomTagPrinter._aggregate_series_tags`
+    that can run in a child process.
+    """
+    all_values: Dict[str, List[str]] = defaultdict(list)
+    for file_path in files:
+        tag_values = _read_dicom_tags_worker(file_path, tags, backend)
+        for tag, value in tag_values.items():
+            all_values[tag].append(value)
+
+    result: Dict[str, str] = {}
+    for tag in tags:
+        values = all_values.get(tag, [])
+        valid = [v for v in values if v not in ('Missing', 'Error')]
+        if not valid:
+            result[tag] = values[0] if values else 'Missing'
+            continue
+        if all(v == valid[0] for v in valid[1:]):
+            result[tag] = valid[0]
+            continue
+        try:
+            numbers = [float(v) for v in valid]
+            result[tag] = f"{_fmt_number(min(numbers))}~{_fmt_number(max(numbers))}"
+        except (ValueError, TypeError):
+            result[tag] = valid[0]
+    return result
 
 
 class DicomTagPrinter:
@@ -251,21 +364,22 @@ class DicomTagPrinter:
     def find_dicom_files(self, input_path: Union[str, Path],
                          recursive: bool = True,
                          max_workers: Optional[int] = None) -> List[Path]:
-        """Find DICOM files, using multi-threaded ``is_dicom_file`` checks.
+        """Find DICOM files, using multi-process ``is_dicom_file`` checks.
 
         The discovery runs in two phases:
 
-        1. **Enumerate** candidate paths via :pymethod:`Path.rglob` (fast, I/O
+        1. **Enumerate** candidate paths via :py:meth:`Path.rglob` (fast, I/O
            only).
-        2. **Filter** candidates through :pymethod:`is_dicom_file` in parallel
-           using a :class:`~concurrent.futures.ThreadPoolExecutor`.
+        2. **Filter** candidates through :func:`_is_dicom_file_worker` in
+           parallel using a :class:`~concurrent.futures.ProcessPoolExecutor`,
+           bypassing the GIL for true parallelism.
 
         A Rich progress bar is displayed during the filtering phase.
 
         Args:
             input_path: Input path (file or directory).
             recursive: Whether to search recursively.
-            max_workers: Thread-pool size (``None`` = executor default).
+            max_workers: Process-pool size (``None`` = CPU count).
 
         Returns:
             Sorted list of DICOM file paths.
@@ -280,6 +394,7 @@ class DicomTagPrinter:
                           f"filtering with is_dicom_file …")
 
         found: List[Path] = []
+        backend = self.backend
 
         with Progress(
             SpinnerColumn(),
@@ -291,9 +406,9 @@ class DicomTagPrinter:
             task = progress.add_task("Scanning for DICOM files …",
                                      total=len(candidates))
 
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
                 future_to_path = {
-                    pool.submit(self.is_dicom_file, fp): fp
+                    pool.submit(_is_dicom_file_worker, fp, backend): fp
                     for fp in candidates
                 }
                 for future in as_completed(future_to_path):
@@ -577,8 +692,9 @@ class DicomTagPrinter:
         """Print DICOM tag information.
 
         File discovery and tag reading are both parallelised with a
-        :class:`~concurrent.futures.ThreadPoolExecutor`.  A Rich progress bar
-        is shown during the reading phase.
+        :class:`~concurrent.futures.ProcessPoolExecutor` for true
+        multi-core parallelism (bypasses the GIL).  A Rich progress bar is
+        shown during the reading phase.
 
         Args:
             input_path: Input path.
@@ -593,7 +709,7 @@ class DicomTagPrinter:
                 ``True``, all files in each series are read and numeric tags are
                 summarised as ``"min~max"`` ranges instead of only showing the
                 representative file's value.
-            max_workers: Thread-pool size for parallel I/O (``None`` = default).
+            max_workers: Process-pool size (``None`` = CPU count).
         """
         self.logger.info(f"Processing: {input_path}")
         self.logger.info(f"Tags to read: {tags}")
@@ -608,23 +724,11 @@ class DicomTagPrinter:
         self.logger.info(f"Found {len(dicom_files)} DICOM files")
 
         results: List[Dict] = []
+        backend = self.backend
 
         if group_by_series:
             series_groups = self.group_by_series(dicom_files)
             self.logger.info(f"Found {len(series_groups)} series")
-
-            def _read_series(item):
-                series_uid, files = item
-                if summarize_numeric and len(files) > 1:
-                    tv = self._aggregate_series_tags(files, tags)
-                else:
-                    tv = self.read_dicom_tags(files[0], tags)
-                return {
-                    'SeriesUID': series_uid,
-                    'FileCount': len(files),
-                    'RepresentativeFile': str(files[0]),
-                    **tv,
-                }
 
             with Progress(
                 SpinnerColumn(),
@@ -635,13 +739,30 @@ class DicomTagPrinter:
             ) as progress:
                 task = progress.add_task("Reading series tags …",
                                          total=len(series_groups))
-                with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    futures = {
-                        pool.submit(_read_series, item): item
-                        for item in series_groups.items()
-                    }
+                with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {}
+                    for series_uid, files in series_groups.items():
+                        if summarize_numeric and len(files) > 1:
+                            fut = pool.submit(
+                                _aggregate_series_tags_worker,
+                                files, tags, backend,
+                            )
+                        else:
+                            fut = pool.submit(
+                                _read_dicom_tags_worker,
+                                files[0], tags, backend,
+                            )
+                        futures[fut] = (series_uid, files)
+
                     for future in as_completed(futures):
-                        results.append(future.result())
+                        series_uid, files = futures[future]
+                        tv = future.result()
+                        results.append({
+                            'SeriesUID': series_uid,
+                            'FileCount': len(files),
+                            'RepresentativeFile': str(files[0]),
+                            **tv,
+                        })
                         progress.advance(task)
         else:
             # File-by-file parallel read
@@ -654,9 +775,10 @@ class DicomTagPrinter:
             ) as progress:
                 task = progress.add_task("Reading DICOM tags …",
                                          total=len(dicom_files))
-                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                with ProcessPoolExecutor(max_workers=max_workers) as pool:
                     future_to_path = {
-                        pool.submit(self.read_dicom_tags, fp, tags): fp
+                        pool.submit(_read_dicom_tags_worker, fp, tags,
+                                    backend): fp
                         for fp in dicom_files
                     }
                     for future in as_completed(future_to_path):
