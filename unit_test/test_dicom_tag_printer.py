@@ -44,6 +44,22 @@ _rich_console.Console = MagicMock
 _rich_logging = _make_stub('rich.logging')
 _rich_logging.RichHandler = MagicMock
 
+# rich.progress stubs — Progress is used as a context manager with .add_task / .advance
+class _FakeTask:
+    pass
+class _FakeProgress:
+    def __init__(self, *a, **kw): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def add_task(self, *a, **kw): return _FakeTask()
+    def advance(self, *a, **kw): pass
+_rich_progress = _make_stub('rich.progress')
+_rich_progress.Progress = _FakeProgress
+_rich_progress.SpinnerColumn = MagicMock
+_rich_progress.BarColumn = MagicMock
+_rich_progress.TextColumn = MagicMock
+_rich_progress.MofNCompleteColumn = MagicMock
+
 # click stub
 _click = _make_stub('click')
 _click.BadParameter = Exception
@@ -70,13 +86,6 @@ class _FakeMNTSLogger:
     def set_global_log_level(level): pass
 
 _mnts_logger_mod.MNTSLogger = _FakeMNTSLogger
-
-_mnts_utils_preproc = _make_stub('mnts.utils.preprocessing')
-# Raise so that find_json_files / find_dicom_files fall back to rglob, which
-# correctly handles nested directories in the test temp dirs.
-def _recursive_list_dir_stub(depth, path):
-    raise RuntimeError("stub: use rglob fallback")
-_mnts_utils_preproc.recursive_list_dir = _recursive_list_dir_stub
 
 _mnts_io_fmt = _make_stub('mnts.io.data_formatting')
 _mnts_io_fmt.pydicom_read_series = MagicMock(return_value={})
