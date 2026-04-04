@@ -35,6 +35,7 @@ except ImportError:
 
 try:
     import pydicom
+    from pydicom.tag import Tag as DicomTag
     from pydicom.datadict import dictionary_description
     PYDICOM_AVAILABLE = True
 except ImportError:
@@ -55,6 +56,56 @@ __all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format', 'print_
 def _fmt_number(n: float) -> str:
     """Format a number, dropping the decimal point for integer-valued floats."""
     return str(int(n)) if n == int(n) else str(n)
+
+
+def _search_functional_groups_pydicom(ds, tag) -> Optional[str]:
+    """Search for *tag* inside Shared/PerFrame Functional Groups Sequences.
+
+    Used for multi-frame Enhanced DICOM (e.g. DIXON, enhanced MR) where
+    per-slice metadata lives in nested sequences rather than at the top level.
+
+    Search order:
+
+    1. ``SharedFunctionalGroupsSequence`` (0x5200, 0x9229) — metadata shared
+       by all frames.
+    2. First item of ``PerFrameFunctionalGroupsSequence`` (0x5200, 0x9230) —
+       metadata for the first individual frame.
+
+    Args:
+        ds: A :class:`pydicom.Dataset` already loaded from the file.
+        tag: A :class:`pydicom.tag.Tag` to look for.
+
+    Returns:
+        Stripped string value if found, ``None`` otherwise.
+    """
+    def _search_item(item) -> Optional[str]:
+        """Recursively search a sequence Dataset item for *tag*."""
+        for elem in item:
+            if elem.tag == tag:
+                return str(elem.value).strip()
+            if elem.VR == 'SQ' and elem.value:
+                for sub_item in elem.value:
+                    found = _search_item(sub_item)
+                    if found is not None:
+                        return found
+        return None
+
+    # 1. Shared Functional Groups (same for all frames)
+    shared_seq = getattr(ds, 'SharedFunctionalGroupsSequence', None)
+    if shared_seq:
+        for item in shared_seq:
+            val = _search_item(item)
+            if val is not None:
+                return val
+
+    # 2. Per-Frame Functional Groups — inspect only the first frame
+    per_frame_seq = getattr(ds, 'PerFrameFunctionalGroupsSequence', None)
+    if per_frame_seq:
+        val = _search_item(per_frame_seq[0])
+        if val is not None:
+            return val
+
+    return None
 
 
 # Rich table column styles keyed by DataFrame column name.
@@ -115,18 +166,40 @@ def _read_dicom_tags_worker(file_path: Path, tags: List[str],
     if backend == 'pydicom':
         try:
             import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
             ds = _pd.dcmread(file_path, stop_before_pixels=True, force=True)
+
+            # Detect multi-frame DICOM (e.g. DIXON, Enhanced MR): all slices
+            # are embedded in a single file with NumberOfFrames (0028,0008) > 1.
+            num_frames = 1
+            _nf = getattr(ds, 'NumberOfFrames', None)
+            if _nf is not None:
+                try:
+                    num_frames = int(str(_nf))
+                except (ValueError, TypeError):
+                    pass
+            is_multiframe = num_frames > 1
+
             result = {}
             for tag_str in tags:
                 try:
                     group, element = tag_str.split('|')
-                    tag = _pd.tag.Tag(int(group, 16), int(element, 16))
+                    tag = _Tag(int(group, 16), int(element, 16))
                     if tag in ds:
                         result[tag_str] = str(ds[tag].value).strip()
+                    elif is_multiframe:
+                        # Fallback: tag may live in Shared/PerFrame Functional
+                        # Groups rather than at the top level.
+                        fg_val = _search_functional_groups_pydicom(ds, tag)
+                        result[tag_str] = fg_val if fg_val is not None else 'Missing'
                     else:
                         result[tag_str] = 'Missing'
                 except Exception:
                     result[tag_str] = 'Error'
+
+            # Carry frame count so callers can override FileCount
+            if is_multiframe:
+                result['__num_frames__'] = str(num_frames)
             return result
         except Exception:
             return {tag: 'Error' for tag in tags}
@@ -179,6 +252,15 @@ def _aggregate_series_tags_worker(files: List[Path], tags: List[str],
             result[tag] = f"{_fmt_number(min(numbers))}~{_fmt_number(max(numbers))}"
         except (ValueError, TypeError):
             result[tag] = valid[0]
+
+    # Propagate __num_frames__ sentinel so the caller can set FileCount correctly
+    # for multi-frame series (e.g. DIXON where every file holds all frames).
+    if '__num_frames__' in all_values:
+        frame_counts = all_values['__num_frames__']
+        try:
+            result['__num_frames__'] = str(sum(int(n) for n in frame_counts))
+        except (ValueError, TypeError):
+            result['__num_frames__'] = frame_counts[0]
     return result
 
 
@@ -239,22 +321,37 @@ class DicomTagPrinter:
         """
         try:
             ds = pydicom.dcmread(file_path, stop_before_pixels=True, force=True)
-            result = {}
 
+            # Detect multi-frame DICOM (e.g. DIXON, Enhanced MR)
+            num_frames = 1
+            _nf = getattr(ds, 'NumberOfFrames', None)
+            if _nf is not None:
+                try:
+                    num_frames = int(str(_nf))
+                except (ValueError, TypeError):
+                    pass
+            is_multiframe = num_frames > 1
+
+            result = {}
             for tag_str in tags:
                 try:
                     group, element = tag_str.split('|')
-                    tag = pydicom.tag.Tag(int(group, 16), int(element, 16))
-
+                    tag = DicomTag(int(group, 16), int(element, 16))
                     if tag in ds:
                         result[tag_str] = str(ds[tag].value).strip()
+                    elif is_multiframe:
+                        # Fallback: tag may live in Shared/PerFrame Functional
+                        # Groups rather than at the top level.
+                        fg_val = _search_functional_groups_pydicom(ds, tag)
+                        result[tag_str] = fg_val if fg_val is not None else 'Missing'
                     else:
                         result[tag_str] = 'Missing'
-
                 except Exception as e:
                     self.logger.warning(f"Cannot read tag {tag_str}: {e}")
                     result[tag_str] = 'Error'
 
+            if is_multiframe:
+                result['__num_frames__'] = str(num_frames)
             return result
 
         except Exception as e:
@@ -498,7 +595,7 @@ class DicomTagPrinter:
 
                     return filtered_dict
             except Exception as e:
-                self.logger.warning(f"Failed to use pydicom_read_series, using fallback: {e}")
+                self.logger.warning(f"Failed to use pydicom_read_series. Maybe it's a DicomDir object: {e}")
 
         series_groups = defaultdict(list)
 
@@ -770,9 +867,15 @@ class DicomTagPrinter:
                     for future in as_completed(futures):
                         series_uid, files = futures[future]
                         tv = future.result()
+                        # For multi-frame DICOM a whole series may live in a
+                        # single file; use NumberOfFrames as the logical count.
+                        num_frames = int(tv.pop('__num_frames__', 0))
+                        file_count = (num_frames
+                                      if num_frames > 1 and len(files) == 1
+                                      else len(files))
                         results.append({
                             'SeriesUID': series_uid,
-                            'FileCount': len(files),
+                            'FileCount': file_count,
                             'RepresentativeFile': str(files[0]),
                             **tv,
                         })
