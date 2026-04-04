@@ -87,7 +87,7 @@ def example_advanced_usage():
         printer = DicomTagPrinter(backend='auto')
         
         print("\n--- Results Grouped by Series ---")
-        printer.print_tags(
+        printer.get_dataframe(
             input_path=dicom_path,
             tags=extended_tags,
             recursive=True,
@@ -97,7 +97,7 @@ def example_advanced_usage():
         )
         
         print("\n--- CSV Format Output ---")
-        printer.print_tags(
+        printer.get_dataframe(
             input_path=dicom_path,
             tags=['0008|103e', '0010|0020'],
             group_by_series=True,
@@ -127,7 +127,7 @@ def example_single_file():
         basic_tags = ['0008|103e', '0010|0020', '0020|0011']
         
         printer = DicomTagPrinter()
-        printer.print_tags(
+        printer.get_dataframe(
             input_path=single_file,
             tags=basic_tags,
             group_by_series=False,  # No need to group for single file

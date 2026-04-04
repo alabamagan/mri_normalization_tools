@@ -686,6 +686,10 @@ class DicomTagPrinter:
         rows = [{col: result.get(col, 'N/A') for col in all_cols} for result in results]
         df = pd.DataFrame(rows, columns=all_cols)
         df.columns = [self.get_tag_name(tag) for tag in df.columns]
+        if 'SubjectID' in df.columns: # Sort it roughly
+            df.sort_values("SubjectID", inplace=True)
+        elif 'Series Number' in df.columns:
+            df.cort_values("Series Number")
         return df
 
     # ------------------------------------------------------------------
@@ -800,10 +804,22 @@ class DicomTagPrinter:
             path_key = 'RepresentativeFile' if group_by_series else 'FilePath'
             self._inject_subject_id(results, id_globber, path_key)
 
+        # Add the filepaths to the tags
+        tags.append('RepresentativeFile' if group_by_series else 'FilePath')
+
         df = self.build_dataframe(results, tags, group_by_series)
         if 'SubjectID' in df.columns:
+            self.logger.info("Found Subject ID, sorting based on it")
+            try:
+                # If it's possible to convert as integer than sort it that way
+                df['SubjectID'] = df['SubjectID'].astype(int, errors='raise')
+            except:
+                self.logger.debug("Cannot sort SubjectID as integer")
+                pass
             df = df.sort_values('SubjectID')
+
         if 'Series Number' in df.columns and 'SubjectID' in df.columns:
+            self.logger.info("Found both Series Number and SubjectID, adding to index")
             df.set_index(['SubjectID', 'Series Number'], inplace=True)
             df.sort_index(inplace=True)
         self._print_results(df, output_format)
@@ -869,7 +885,7 @@ class DicomTagPrinter:
         elif output_format == 'json':
             self.logger.info(df.to_dict('records'))
         else:
-            raise ValueError(f"Unsupported output format: {output_format}")
+            self.logger.info(df.to_string())
 
     def _print_table(self, df: 'pd.DataFrame') -> None:
         """Render the unified DataFrame as a rich table."""

@@ -37,7 +37,7 @@ import sys
 )
 @click.option(
     '-f', '--format',
-    type=click.Choice(['table', 'csv', 'json']),
+    type=click.Choice(['table', 'csv', 'json', 'excel']),
     default='table',
     help='Output format (default: table)'
 )
@@ -229,6 +229,9 @@ def dicom_tag_printer_cli(
         if format == 'csv' and tags is not None:
             printer.logger.info(f"Writing to: {output.with_suffix('.csv')}")
             tags.to_csv(output.with_suffix('.csv'))
+        elif format == 'excel' and tags is not None:
+            printer.logger.info(f"Writing to: {output.with_suffix('.xlsx')}")
+            tags.to_excel(output.with_suffix('.xlsx'))
         elif format == 'json':
             printer.logger.warning(f"This path of outputing json is not verified")
             printer.logger.info(f"Writing to: {output.with_suffix('.json')}")

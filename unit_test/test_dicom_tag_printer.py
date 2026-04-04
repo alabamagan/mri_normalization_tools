@@ -282,7 +282,7 @@ class TestDicomTagPrinter(unittest.TestCase):
         printer = DicomTagPrinter()
         
         # Should not raise exception, but log warning
-        printer.print_tags('/nonexistent/path', ['0008|103e'])
+        printer.get_dataframe('/nonexistent/path', ['0008|103e'])
     
     def test_console_entry_click_not_available(self):
         """Test console entry when click is not available"""
