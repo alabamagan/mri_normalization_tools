@@ -74,6 +74,12 @@ import sys
     is_flag=True,
     help='Show verbose information'
 )
+@click.option(
+    '--debug',
+    is_flag=True,
+    default=False,
+    help='Debug mode: limit processing to first 10 directories (series mode) or 10 files (file mode).'
+)
 def dicom_tag_printer_cli(
         input_path: Path,
         output: Path,
@@ -85,7 +91,8 @@ def dicom_tag_printer_cli(
         max_workers: int,
         json_source: bool,
         id_globber: str,
-        verbose: bool
+        verbose: bool,
+        debug: bool
 ):
     """
     DICOM Tag Printer - Print specific tag information from DICOM files or JSON tag dumps.
@@ -158,6 +165,8 @@ def dicom_tag_printer_cli(
                 "0008|1090",  # Manufacturer's Model Name
                 "0018|0015",  # Body Part
                 "0018|1110",  # FOV
+                "0010|0030",  # Birthdate
+                "0010|0040",  # Sex
             ],
             'mri': [
                 "0018|0080",  # Repetition Time (TR)
@@ -220,6 +229,7 @@ def dicom_tag_printer_cli(
                 output_format=format,
                 id_globber=id_globber,
                 max_workers=max_workers,
+                debug=debug,
             )
 
         # Default name if outputing to a directory

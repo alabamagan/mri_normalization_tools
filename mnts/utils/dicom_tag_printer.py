@@ -264,6 +264,207 @@ def _aggregate_series_tags_worker(files: List[Path], tags: List[str],
     return result
 
 
+def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, List[Path]]:
+    """並行讀取單個目錄中的所有系列（worker 函數）
+    
+    這個函數處理一個目錄中的所有 DICOM 文件，並按 SeriesInstanceUID 分組。
+    利用 pydicom 的 specific_tags 優化（只讀取必要的標籤）。
+    
+    Args:
+        directory: 要處理的目錄路徑
+        backend: 'pydicom' 或 'sitk'
+    
+    Returns:
+        字典，鍵為 SeriesInstanceUID，值為該目錄中屬於該系列的文件列表
+    """
+    from collections import defaultdict
+    
+    if backend == 'pydicom':
+        try:
+            import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
+            from pathlib import Path
+            import os
+            
+            series_groups = defaultdict(list)
+            
+            # 只處理當前目錄（不遞歸）
+            try:
+                files = [Path(directory) / f for f in os.listdir(directory)
+                        if (Path(directory) / f).is_file()]
+            except (OSError, PermissionError):
+                return {}
+            
+            for file_path in files:
+                try:
+                    # 只讀取 SeriesInstanceUID 標籤以提高速度
+                    ds = _pd.dcmread(file_path,
+                                    specific_tags=[_Tag(0x0020, 0x000e)],
+                                    stop_before_pixels=True)
+                    series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
+                    series_groups[series_uid].append(file_path)
+                except Exception:
+                    # 不是 DICOM 文件，跳過
+                    pass
+            
+            return dict(series_groups)
+        except Exception:
+            return {}
+    else:
+        # SimpleITK 後端的實現
+        try:
+            import SimpleITK as _sitk
+            from pathlib import Path
+            import os
+            
+            series_groups = defaultdict(list)
+            try:
+                files = [Path(directory) / f for f in os.listdir(directory)
+                        if (Path(directory) / f).is_file()]
+            except (OSError, PermissionError):
+                return {}
+            
+            for file_path in files:
+                try:
+                    reader = _sitk.ImageFileReader()
+                    reader.SetFileName(str(file_path))
+                    reader.ReadImageInformation()
+                    series_uid = (reader.GetMetaData('0020|000e')
+                                if reader.HasMetaDataKey('0020|000e')
+                                else 'Unknown')
+                    series_groups[series_uid].append(file_path)
+                except Exception:
+                    pass
+            
+            return dict(series_groups)
+        except Exception:
+            return {}
+
+
+def _read_series_uid_worker(file_path: Path, backend: str) -> tuple:
+    """讀取單個文件的 SeriesInstanceUID（worker 函數）
+    
+    用於文件級別並行化的備選方案。
+    
+    Args:
+        file_path: DICOM 文件路徑
+        backend: 'pydicom' 或 'sitk'
+    
+    Returns:
+        (file_path, series_uid) 元組
+    """
+    try:
+        if backend == 'pydicom':
+            import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
+            # 只讀取 SeriesInstanceUID 標籤
+            ds = _pd.dcmread(file_path,
+                           specific_tags=[_Tag(0x0020, 0x000e)],
+                           stop_before_pixels=True)
+            series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
+        else:
+            import SimpleITK as _sitk
+            reader = _sitk.ImageFileReader()
+            reader.SetFileName(str(file_path))
+            reader.ReadImageInformation()
+            series_uid = reader.GetMetaData('0020|000e') if reader.HasMetaDataKey('0020|000e') else 'Unknown'
+        return (file_path, series_uid)
+    except Exception:
+        return (file_path, 'Unknown')
+
+
+def _read_json_tags_worker(file_path: Path, tags: Optional[List[str]]) -> Dict[str, Any]:
+    """讀取 JSON 文件標籤（worker 函數）
+    
+    Args:
+        file_path: JSON 文件路徑
+        tags: 要提取的標籤列表，None 表示提取所有標籤
+    
+    Returns:
+        包含 FilePath 和標籤值的字典
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, dict):
+            return {'FilePath': str(file_path), '__error__': True}
+        
+        data = {k: str(v).strip() for k, v in data.items()}
+        
+        if not tags:
+            return {'FilePath': str(file_path), **data}
+        
+        tag_values = {t: data.get(t, 'Missing') for t in tags}
+        return {'FilePath': str(file_path), **tag_values}
+    except Exception:
+        return {'FilePath': str(file_path), '__error__': True}
+
+
+def _process_directory_complete_worker(directory: Path, tags: List[str], backend: str,
+                                       summarize_numeric: bool) -> List[Dict[str, Any]]:
+    """完整處理單個目錄：發現 DICOM 文件、按 series 分組、讀取標籤（worker 函數）
+    
+    這個 worker 函數執行完整的目錄處理流程：
+    1. 掃描目錄中的所有 DICOM 文件
+    2. 按 SeriesInstanceUID 分組
+    3. 讀取每個 series 的標籤
+    
+    Args:
+        directory: 要處理的目錄路徑
+        tags: 要讀取的 DICOM 標籤列表
+        backend: 使用的後端 ('pydicom' 或 'sitk')
+        summarize_numeric: 是否對數值標籤進行彙總
+    
+    Returns:
+        結果字典列表，每個 series 一個字典
+    """
+    results = []
+    
+    try:
+        # Step 1: 發現目錄中的所有 DICOM 文件
+        dicom_files = []
+        for file_path in directory.rglob('*'):
+            if not file_path.is_file():
+                continue
+            if _is_dicom_file_worker(file_path, backend):
+                dicom_files.append(file_path)
+        
+        if not dicom_files:
+            return results
+        
+        # Step 2: 按 SeriesInstanceUID 分組
+        series_groups = {}
+        for file_path in dicom_files:
+            _, series_uid = _read_series_uid_worker(file_path, backend)
+            if series_uid and series_uid != 'Unknown':
+                series_groups.setdefault(series_uid, []).append(file_path)
+        
+        # Step 3: 讀取每個 series 的標籤
+        for series_uid, files in series_groups.items():
+            if summarize_numeric and len(files) > 1:
+                # 彙總所有文件的標籤
+                tag_values = _aggregate_series_tags_worker(files, tags, backend)
+            else:
+                # 只讀取代表性文件
+                tag_values = _read_dicom_tags_worker(files[0], tags, backend)
+            
+            # 構建結果
+            result = {
+                'SeriesUID': series_uid,
+                'FileCount': len(files),
+                'RepresentativeFile': str(files[0]),
+                **tag_values
+            }
+            results.append(result)
+    
+    except Exception as e:
+        # 如果目錄處理失敗，返回錯誤標記
+        pass
+    
+    return results
+
+
 class DicomTagPrinter:
     """DICOM Tag Printer Class
 
@@ -457,6 +658,35 @@ class DicomTagPrinter:
         else:
             return [fp for fp in input_path.iterdir()
                     if fp.is_file() and fp.match(glob_pattern)]
+    
+    def find_dicom_directories(self, input_path: Union[str, Path],
+                              recursive: bool = True) -> List[Path]:
+        """發現包含 DICOM 文件的目錄
+        
+        Args:
+            input_path: 輸入路徑
+            recursive: 是否遞迴搜索
+        
+        Returns:
+            包含 DICOM 文件的目錄列表
+        """
+        input_path = Path(input_path)
+        directories = set()
+        
+        if input_path.is_file():
+            # 如果是單個文件，返回其父目錄
+            if self.is_dicom_file(input_path):
+                directories.add(input_path.parent)
+        elif input_path.is_dir():
+            # 搜索所有可能的 DICOM 文件
+            candidates = self._list_candidate_files(input_path, '*', recursive)
+            
+            # 收集包含 DICOM 文件的目錄
+            for candidate in candidates:
+                if candidate.is_file() and self.is_dicom_file(candidate):
+                    directories.add(candidate.parent)
+        
+        return sorted(list(directories))
 
     def find_dicom_files(self, input_path: Union[str, Path],
                          recursive: bool = True,
@@ -571,15 +801,21 @@ class DicomTagPrinter:
     # Grouping & aggregation
     # ------------------------------------------------------------------
 
-    def group_by_series(self, dicom_files: List[Path]) -> Dict[str, List[Path]]:
-        """Group DICOM files by series.
+    def group_by_series(self, dicom_files: List[Path],
+                       max_workers: Optional[int] = None) -> Dict[str, List[Path]]:
+        """Group DICOM files by series with intelligent parallelization.
+        
+        Uses directory-level parallelization when there are enough directories,
+        otherwise falls back to file-level parallelization.
 
         Args:
             dicom_files: List of DICOM files
+            max_workers: Maximum number of worker processes (None = CPU count)
 
         Returns:
             Dictionary of file groups keyed by series UID
         """
+        # Fast path: try pydicom_read_series first
         if self.backend == 'pydicom' and PYDICOM_AVAILABLE:
             try:
                 if dicom_files:
@@ -597,25 +833,94 @@ class DicomTagPrinter:
             except Exception as e:
                 self.logger.warning(f"Failed to use pydicom_read_series. Maybe it's a DicomDir object: {e}")
 
-        series_groups = defaultdict(list)
-
+        # Group files by directory
+        files_by_dir = defaultdict(list)
         for file_path in dicom_files:
-            try:
-                if self.backend == 'pydicom':
-                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-                    series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
-                else:
-                    reader = sitk.ImageFileReader()
-                    reader.SetFileName(str(file_path))
-                    reader.ReadImageInformation()
-                    series_uid = reader.GetMetaData('0020|000e') if reader.HasMetaDataKey('0020|000e') else 'Unknown'
-
-                series_groups[series_uid].append(file_path)
-
-            except Exception as e:
-                self.logger.warning(f"Cannot read series UID from {file_path}: {e}")
-                series_groups['Unknown'].append(file_path)
-
+            files_by_dir[file_path.parent].append(file_path)
+        
+        directories = list(files_by_dir.keys())
+        num_dirs = len(directories)
+        num_workers = max_workers or os.cpu_count() or 4
+        
+        # Decide: directory-level vs file-level parallelization
+        if num_dirs >= num_workers:
+            # Directory-level parallelization (preferred)
+            self.logger.debug(f"Using directory-level parallelization ({num_dirs} directories)")
+            return self._group_by_series_directory_parallel(files_by_dir, directories, max_workers)
+        else:
+            # File-level parallelization (fallback)
+            self.logger.debug(f"Using file-level parallelization ({len(dicom_files)} files in {num_dirs} directories)")
+            return self._group_by_series_file_parallel(dicom_files, max_workers)
+    
+    def _group_by_series_directory_parallel(self, files_by_dir: Dict[Path, List[Path]],
+                                           directories: List[Path],
+                                           max_workers: Optional[int]) -> Dict[str, List[Path]]:
+        """Parallel grouping at directory level."""
+        backend = self.backend
+        all_series_groups = defaultdict(list)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Grouping by series (directory-level)...",
+                                    total=len(directories))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_directory_series_worker, dir_path, backend): dir_path
+                          for dir_path in directories}
+                
+                for future in as_completed(futures):
+                    dir_path = futures[future]
+                    try:
+                        dir_series_groups = future.result()
+                        
+                        # Merge results, only include files we care about
+                        file_set = set(files_by_dir[dir_path])
+                        for series_uid, files in dir_series_groups.items():
+                            filtered_files = [f for f in files if f in file_set]
+                            all_series_groups[series_uid].extend(filtered_files)
+                    except Exception as e:
+                        self.logger.warning(f"Error processing directory {dir_path}: {e}")
+                    finally:
+                        progress.advance(task)
+        
+        return dict(all_series_groups)
+    
+    def _group_by_series_file_parallel(self, dicom_files: List[Path],
+                                      max_workers: Optional[int]) -> Dict[str, List[Path]]:
+        """Parallel grouping at file level (fallback)."""
+        backend = self.backend
+        series_groups = defaultdict(list)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Grouping by series (file-level)...",
+                                    total=len(dicom_files))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_series_uid_worker, fp, backend): fp
+                          for fp in dicom_files}
+                
+                for future in as_completed(futures):
+                    try:
+                        file_path, series_uid = future.result()
+                        series_groups[series_uid].append(file_path)
+                    except Exception as e:
+                        fp = futures[future]
+                        self.logger.warning(f"Error reading series UID from {fp}: {e}")
+                        series_groups['Unknown'].append(fp)
+                    finally:
+                        progress.advance(task)
+        
         return dict(series_groups)
 
     def _aggregate_series_tags(self, files: List[Path], tags: List[str]) -> Dict[str, str]:
@@ -798,7 +1103,8 @@ class DicomTagPrinter:
                       output_format: str = 'table',
                       id_globber: Optional[str] = None,
                       summarize_numeric: bool = False,
-                      max_workers: Optional[int] = None) -> None:
+                      max_workers: Optional[int] = None,
+                      debug: bool = False) -> None:
         """Print DICOM tag information.
 
         File discovery and tag reading are both parallelised with a
@@ -820,25 +1126,67 @@ class DicomTagPrinter:
                 summarised as ``"min~max"`` ranges instead of only showing the
                 representative file's value.
             max_workers: Process-pool size (``None`` = CPU count).
+            debug: When ``True``, limit processing to the first 10 directories
+                (series mode) or first 10 files (file mode).
         """
         self.logger.info(f"Processing: {input_path}")
         self.logger.info(f"Tags to read: {tags}")
-
-        dicom_files = self.find_dicom_files(input_path, recursive,
-                                            max_workers=max_workers)
-
-        if not dicom_files:
-            self.logger.warning("No DICOM files found")
-            return
-
-        self.logger.info(f"Found {len(dicom_files)} DICOM files")
 
         results: List[Dict] = []
         backend = self.backend
 
         if group_by_series:
-            series_groups = self.group_by_series(dicom_files)
-            self.logger.info(f"Found {len(series_groups)} series")
+            # 目錄優先模式：直接發現目錄並並行處理每個目錄
+            directories = self.find_dicom_directories(input_path, recursive)
+
+            if not directories:
+                self.logger.warning("No DICOM directories found")
+                return
+
+            if debug:
+                directories = directories[:10]
+                self.logger.debug("[DEBUG] Truncated to first 10 directories")
+
+            self.logger.info(f"Found {len(directories)} directories with DICOM files")
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Processing directories...",
+                                         total=len(directories))
+                with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {
+                        pool.submit(_process_directory_complete_worker,
+                                   dir_path, tags, backend, summarize_numeric): dir_path
+                        for dir_path in directories
+                    }
+                    
+                    for future in as_completed(futures):
+                        dir_path = futures[future]
+                        try:
+                            dir_results = future.result()
+                            results.extend(dir_results)
+                        except Exception as e:
+                            self.logger.warning(f"Error processing directory {dir_path}: {e}")
+                        progress.advance(task)
+        else:
+            # 文件模式：使用原有的文件發現流程
+            dicom_files = self.find_dicom_files(input_path, recursive,
+                                                max_workers=max_workers)
+
+            if not dicom_files:
+                self.logger.warning("No DICOM files found")
+                return
+
+            if debug:
+                dicom_files = dicom_files[:10]
+                self.logger.debug("[DEBUG] Limiting to %d files" % len(dicom_files))
+
+            self.logger.info(f"Found {len(dicom_files)} DICOM files")
 
             with Progress(
                 SpinnerColumn(),
@@ -847,60 +1195,24 @@ class DicomTagPrinter:
                 MofNCompleteColumn(),
                 transient=True,
             ) as progress:
-                task = progress.add_task("Reading series tags ...",
-                                         total=len(series_groups))
-                with ProcessPoolExecutor(max_workers=max_workers) as pool:
-                    futures = {}
-                    for series_uid, files in series_groups.items():
-                        if summarize_numeric and len(files) > 1:
-                            fut = pool.submit(
-                                _aggregate_series_tags_worker,
-                                files, tags, backend,
-                            )
-                        else:
-                            fut = pool.submit(
-                                _read_dicom_tags_worker,
-                                files[0], tags, backend,
-                            )
-                        futures[fut] = (series_uid, files)
-
-                    for future in as_completed(futures):
-                        series_uid, files = futures[future]
-                        tv = future.result()
-                        # For multi-frame DICOM a whole series may live in a
-                        # single file; use NumberOfFrames as the logical count.
-                        num_frames = int(tv.pop('__num_frames__', 0))
-                        file_count = (num_frames
-                                      if num_frames > 1 and len(files) == 1
-                                      else len(files))
-                        results.append({
-                            'SeriesUID': series_uid,
-                            'FileCount': file_count,
-                            'RepresentativeFile': str(files[0]),
-                            **tv,
-                        })
-                        progress.advance(task)
-        else:
-            # File-by-file parallel read
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                transient=True
-            ) as progress:
                 task = progress.add_task("Reading DICOM tags …",
                                          total=len(dicom_files))
                 with ProcessPoolExecutor(max_workers=max_workers) as pool:
                     future_to_path = {
-                        pool.submit(_read_dicom_tags_worker, fp, tags,
-                                    backend): fp
+                        pool.submit(_read_dicom_tags_worker, fp, tags, backend): fp
                         for fp in dicom_files
                     }
                     for future in as_completed(future_to_path):
                         fp = future_to_path[future]
-                        tag_values = future.result()
-                        results.append({'FilePath': str(fp), **tag_values})
+                        tv = future.result()
+                        # For multi-frame DICOM a whole series may live in a
+                        # single file, so we need to check for the number of
+                        # frames and add it to the result
+                        num_frames = tv.pop('__num_frames__', 1)
+                        results.append({
+                            'FilePath': str(fp),
+                            **tv
+                        })
                         progress.advance(task)
 
         if id_globber:
@@ -912,13 +1224,6 @@ class DicomTagPrinter:
 
         df = self.build_dataframe(results, tags, group_by_series)
         if 'SubjectID' in df.columns:
-            self.logger.info("Found Subject ID, sorting based on it")
-            try:
-                # If it's possible to convert as integer than sort it that way
-                df['SubjectID'] = df['SubjectID'].astype(int, errors='raise')
-            except:
-                self.logger.debug("Cannot sort SubjectID as integer")
-                pass
             df = df.sort_values('SubjectID')
 
         if 'Series Number' in df.columns and 'SubjectID' in df.columns:
@@ -931,8 +1236,9 @@ class DicomTagPrinter:
     def get_tags_from_json(self, input_path: Union[str, Path],
                            tags: Optional[List[str]] = None,
                            recursive: bool = True, output_format: str = 'table',
-                           id_globber: Optional[str] = None) -> 'pd.DataFrame | None':
-        """Read DICOM tag information from a directory of JSON files.
+                           id_globber: Optional[str] = None,
+                           max_workers: Optional[int] = None) -> 'pd.DataFrame | None':
+        """Read DICOM tag information from a directory of JSON files with parallel processing.
 
         Each JSON file in *input_path* is treated as one entry (typically one
         series) and must contain DICOM tags as ``"XXXX|XXXX": "value"`` pairs.
@@ -946,6 +1252,7 @@ class DicomTagPrinter:
             id_globber: Optional regex pattern to extract a subject/case ID from
                 each JSON file's name.  When supplied, ``SubjectID`` replaces the
                 file path as the primary index column.
+            max_workers: Maximum number of worker processes (None = CPU count).
         """
         self.logger.info(f"Processing JSON source: {input_path}")
 
@@ -960,20 +1267,42 @@ class DicomTagPrinter:
         results = []
         effective_tags: Optional[List[str]] = list(tags) if tags else None
 
-        for file_path in json_files:
-            tag_values = self.read_json_tags(file_path, effective_tags)
-
-            # Initialize list from first file when no tags were requested
-            if effective_tags is None:
-                effective_tags = list(tag_values.keys())
-
-            results.append({'FilePath': str(file_path), **tag_values})
+        # Parallel processing of JSON files
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Reading JSON files...", total=len(json_files))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_json_tags_worker, fp, effective_tags): fp
+                          for fp in json_files}
+                
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        
+                        # Initialize tag list from first file when no tags were requested
+                        if effective_tags is None and '__error__' not in result:
+                            effective_tags = [k for k in result.keys() if k != 'FilePath']
+                        
+                        if '__error__' not in result:
+                            results.append(result)
+                    except Exception as e:
+                        fp = futures[future]
+                        self.logger.warning(f"Error reading JSON file {fp}: {e}")
+                    finally:
+                        progress.advance(task)
 
         if id_globber:
             self._inject_subject_id(results, id_globber, path_key='FilePath')
 
         df = self.build_dataframe(results, effective_tags or [], group_by_series=False)
         return df
+    
 
     # ------------------------------------------------------------------
     # Output formatting
