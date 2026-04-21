@@ -265,17 +265,20 @@ def _aggregate_series_tags_worker(files: List[Path], tags: List[str],
 
 
 def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, List[Path]]:
-    """並行讀取單個目錄中的所有系列（worker 函數）
-    
-    這個函數處理一個目錄中的所有 DICOM 文件，並按 SeriesInstanceUID 分組。
-    利用 pydicom 的 specific_tags 優化（只讀取必要的標籤）。
-    
+    """Group all DICOM files in a single directory by SeriesInstanceUID.
+
+    Reads only the SeriesInstanceUID tag (0x0020, 0x000e) for speed via
+    pydicom's ``specific_tags`` optimisation.  Non-DICOM files are silently
+    skipped.  Only the immediate contents of *directory* are examined — no
+    recursion.
+
     Args:
-        directory: 要處理的目錄路徑
-        backend: 'pydicom' 或 'sitk'
-    
+        directory: Directory to scan.
+        backend: ``'pydicom'`` or ``'sitk'``.
+
     Returns:
-        字典，鍵為 SeriesInstanceUID，值為該目錄中屬於該系列的文件列表
+        Dict mapping each SeriesInstanceUID to the list of files in that
+        directory belonging to that series.
     """
     from collections import defaultdict
     
@@ -288,7 +291,7 @@ def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, Li
             
             series_groups = defaultdict(list)
             
-            # 只處理當前目錄（不遞歸）
+            # Non-recursive: only files directly inside the directory
             try:
                 files = [Path(directory) / f for f in os.listdir(directory)
                         if (Path(directory) / f).is_file()]
@@ -297,21 +300,21 @@ def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, Li
             
             for file_path in files:
                 try:
-                    # 只讀取 SeriesInstanceUID 標籤以提高速度
+                    # Read only SeriesInstanceUID for speed
                     ds = _pd.dcmread(file_path,
                                     specific_tags=[_Tag(0x0020, 0x000e)],
                                     stop_before_pixels=True)
                     series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
                     series_groups[series_uid].append(file_path)
                 except Exception:
-                    # 不是 DICOM 文件，跳過
+                    # Not a DICOM file; skip
                     pass
             
             return dict(series_groups)
         except Exception:
             return {}
     else:
-        # SimpleITK 後端的實現
+        # SimpleITK backend
         try:
             import SimpleITK as _sitk
             from pathlib import Path
@@ -342,22 +345,24 @@ def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, Li
 
 
 def _read_series_uid_worker(file_path: Path, backend: str) -> tuple:
-    """讀取單個文件的 SeriesInstanceUID（worker 函數）
-    
-    用於文件級別並行化的備選方案。
-    
+    """Read the SeriesInstanceUID from a single DICOM file.
+
+    Used as the per-file fallback when directory-level parallelisation is not
+    applicable.
+
     Args:
-        file_path: DICOM 文件路徑
-        backend: 'pydicom' 或 'sitk'
-    
+        file_path: Path to the DICOM file.
+        backend: ``'pydicom'`` or ``'sitk'``.
+
     Returns:
-        (file_path, series_uid) 元組
+        ``(file_path, series_uid)`` tuple.  *series_uid* is ``'Unknown'`` if
+        the tag cannot be read.
     """
     try:
         if backend == 'pydicom':
             import pydicom as _pd
             from pydicom.tag import Tag as _Tag
-            # 只讀取 SeriesInstanceUID 標籤
+            # Read only SeriesInstanceUID for speed
             ds = _pd.dcmread(file_path,
                            specific_tags=[_Tag(0x0020, 0x000e)],
                            stop_before_pixels=True)
@@ -374,14 +379,16 @@ def _read_series_uid_worker(file_path: Path, backend: str) -> tuple:
 
 
 def _read_json_tags_worker(file_path: Path, tags: Optional[List[str]]) -> Dict[str, Any]:
-    """讀取 JSON 文件標籤（worker 函數）
-    
+    """Read DICOM tags from a single JSON file.
+
     Args:
-        file_path: JSON 文件路徑
-        tags: 要提取的標籤列表，None 表示提取所有標籤
-    
+        file_path: Path to the JSON file.
+        tags: Tags to extract.  ``None`` means extract all tags present in the
+            file.
+
     Returns:
-        包含 FilePath 和標籤值的字典
+        Dict containing ``'FilePath'`` and one key per tag value.  An
+        ``'__error__'`` key is added when the file cannot be read.
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -403,26 +410,28 @@ def _read_json_tags_worker(file_path: Path, tags: Optional[List[str]]) -> Dict[s
 
 def _process_directory_complete_worker(directory: Path, tags: List[str], backend: str,
                                        summarize_numeric: bool) -> List[Dict[str, Any]]:
-    """完整處理單個目錄：發現 DICOM 文件、按 series 分組、讀取標籤（worker 函數）
-    
-    這個 worker 函數執行完整的目錄處理流程：
-    1. 掃描目錄中的所有 DICOM 文件
-    2. 按 SeriesInstanceUID 分組
-    3. 讀取每個 series 的標籤
-    
+    """Fully process a single directory: discover DICOM files, group by series, read tags.
+
+    Executes the complete per-directory pipeline:
+
+    1. Scan all DICOM files under *directory* (recursive).
+    2. Group files by SeriesInstanceUID.
+    3. Read the requested tags for each series.
+
     Args:
-        directory: 要處理的目錄路徑
-        tags: 要讀取的 DICOM 標籤列表
-        backend: 使用的後端 ('pydicom' 或 'sitk')
-        summarize_numeric: 是否對數值標籤進行彙總
-    
+        directory: Directory to process.
+        tags: DICOM tags to read.
+        backend: ``'pydicom'`` or ``'sitk'``.
+        summarize_numeric: When ``True``, aggregate numeric tags across all
+            files in each series as ``"min~max"`` ranges.
+
     Returns:
-        結果字典列表，每個 series 一個字典
+        List of result dicts, one per series.
     """
     results = []
     
     try:
-        # Step 1: 發現目錄中的所有 DICOM 文件
+        # Step 1: Discover all DICOM files under the directory
         dicom_files = []
         for file_path in directory.rglob('*'):
             if not file_path.is_file():
@@ -433,23 +442,21 @@ def _process_directory_complete_worker(directory: Path, tags: List[str], backend
         if not dicom_files:
             return results
         
-        # Step 2: 按 SeriesInstanceUID 分組
+        # Step 2: Group by SeriesInstanceUID
         series_groups = {}
         for file_path in dicom_files:
             _, series_uid = _read_series_uid_worker(file_path, backend)
             if series_uid and series_uid != 'Unknown':
                 series_groups.setdefault(series_uid, []).append(file_path)
         
-        # Step 3: 讀取每個 series 的標籤
+        # Step 3: Read tags for each series
         for series_uid, files in series_groups.items():
             if summarize_numeric and len(files) > 1:
-                # 彙總所有文件的標籤
                 tag_values = _aggregate_series_tags_worker(files, tags, backend)
             else:
-                # 只讀取代表性文件
                 tag_values = _read_dicom_tags_worker(files[0], tags, backend)
-            
-            # 構建結果
+
+            # Build result
             result = {
                 'SeriesUID': series_uid,
                 'FileCount': len(files),
@@ -458,8 +465,7 @@ def _process_directory_complete_worker(directory: Path, tags: List[str], backend
             }
             results.append(result)
     
-    except Exception as e:
-        # 如果目錄處理失敗，返回錯誤標記
+    except Exception:
         pass
     
     return results
@@ -661,27 +667,24 @@ class DicomTagPrinter:
     
     def find_dicom_directories(self, input_path: Union[str, Path],
                               recursive: bool = True) -> List[Path]:
-        """發現包含 DICOM 文件的目錄
-        
+        """Find all directories that contain at least one DICOM file.
+
         Args:
-            input_path: 輸入路徑
-            recursive: 是否遞迴搜索
-        
+            input_path: File or directory to search.
+            recursive: Whether to descend into subdirectories.
+
         Returns:
-            包含 DICOM 文件的目錄列表
+            Sorted list of directory paths that contain DICOM files.
         """
         input_path = Path(input_path)
         directories = set()
         
         if input_path.is_file():
-            # 如果是單個文件，返回其父目錄
             if self.is_dicom_file(input_path):
                 directories.add(input_path.parent)
         elif input_path.is_dir():
-            # 搜索所有可能的 DICOM 文件
             candidates = self._list_candidate_files(input_path, '*', recursive)
-            
-            # 收集包含 DICOM 文件的目錄
+            # Collect the parent directory of every confirmed DICOM file
             for candidate in candidates:
                 if candidate.is_file() and self.is_dicom_file(candidate):
                     directories.add(candidate.parent)
@@ -1136,7 +1139,7 @@ class DicomTagPrinter:
         backend = self.backend
 
         if group_by_series:
-            # 目錄優先模式：直接發現目錄並並行處理每個目錄
+            # Directory-first mode: discover directories and process each in parallel
             directories = self.find_dicom_directories(input_path, recursive)
 
             if not directories:
@@ -1174,7 +1177,7 @@ class DicomTagPrinter:
                             self.logger.warning(f"Error processing directory {dir_path}: {e}")
                         progress.advance(task)
         else:
-            # 文件模式：使用原有的文件發現流程
+            # File mode: discover individual DICOM files
             dicom_files = self.find_dicom_files(input_path, recursive,
                                                 max_workers=max_workers)
 
