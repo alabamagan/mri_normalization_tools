@@ -159,7 +159,8 @@ class Dcm2NiiConverter:
                  debug              : Optional[bool]                = False,
                  dump_meta_data     : Optional[bool]                = False,
                  regex_replace      : Optional[dict]                = None,
-                 custom_filename_format: Optional[str]             = None) -> None:
+                 custom_filename_format: Optional[str]             = None,
+                 glob_id_from_directory: Optional[bool]            = False) -> None:
         # Initialize class
         self.folder = folder
         self.out_dir = out_dir
@@ -176,6 +177,7 @@ class Dcm2NiiConverter:
         self.dump_meta_data = dump_meta_data
         self.regex_replace = regex_replace
         self.custom_filename_format = custom_filename_format
+        self.glob_id_from_directory = glob_id_from_directory
 
         # Worker ID and logger setup
         self.workerid = mpi.current_process().name
@@ -214,7 +216,7 @@ class Dcm2NiiConverter:
             os.makedirs(self.out_dir, exist_ok=True)
             assert os.path.isdir(self.out_dir), "Output dir was not made."
 
-    def pre_processing_paths(self) -> Path:
+    def pre_processing_paths(self) -> Tuple[str, str]:
         r"""Preprocess and standardize input path. If option `use_top_level_fname` is specified, this method will also
         update the prefix to the top level folder as identifier of this data. Otherwise, the ID globbed by the specified
         `idglobber` will be used instead.
@@ -231,14 +233,26 @@ class Dcm2NiiConverter:
         f = folder
 
         # Search ID from path using `idglobber`
-        matchobj = re.search(self.idglobber, os.path.basename(f))
+        # self.idglobber is always a str here (defaulted to a pattern in __init__)
+        idglobber = self.idglobber
+        if not idglobber:
+            return f, "NA"
 
-        if not matchobj is None:
-            id_from_path = matchobj.group()
-        else:
+        if self.glob_id_from_directory:
+            # Walk every path component from leaf upward; fullmatch each component,
+            # honour capture group 1 when present (matches dicom_tag_printer behavior).
             id_from_path = "NA"
+            for component in [Path(f)] + list(Path(f).parents):
+                matchobj = re.fullmatch(idglobber, component.name)
+                if matchobj:
+                    id_from_path = matchobj.group(1) if matchobj.lastindex else matchobj.group()
+                    break
+        else:
+            matchobj = re.search(idglobber, os.path.basename(f))
+            id_from_path = matchobj.group() if matchobj is not None else "NA"
 
-        # Handle the case when each patient has subfolders for each series
+        # Handle the case when each patient has subfolders for each series.
+        # NOTE: use_top_level_fname always overrides id_from_path set above.
         if self.use_top_level_fname:
             path = str(folder.replace(str(Path(self.root_dir).absolute()), '/')).lstrip(os.sep) # lstrip to make sure its not starting from /
             self.logger.debug(f"Updated folder path: {folder.replace(str(Path(self.root_dir).absolute()), '/')}")
@@ -532,7 +546,8 @@ def dicom2nii(folder: str,
               debug = False,
               regex_replace = None,
               dump_meta_data = False,
-              custom_filename_format: str = None) -> None:
+              custom_filename_format: str = None,
+              glob_id_from_directory: bool = False) -> None:
     """Covert a series under specified folder into an nii.gz image.
     This tries to assign a unique ID to each of the converted images, either based on their patient id DICOM tag or
     the folder containing the image series.
@@ -576,7 +591,8 @@ def dicom2nii(folder: str,
                                      debug=debug,
                                      regex_replace=regex_replace,
                                      dump_meta_data=dump_meta_data,
-                                     custom_filename_format=custom_filename_format)
+                                     custom_filename_format=custom_filename_format,
+                                     glob_id_from_directory=glob_id_from_directory)
         converter.Execute()
     except Exception as e:
         MNTSLogger.global_logger.exception(e)

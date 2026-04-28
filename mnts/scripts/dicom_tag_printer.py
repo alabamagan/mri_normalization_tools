@@ -167,6 +167,7 @@ def dicom_tag_printer_cli(
                 "0018|1110",  # FOV
                 "0010|0030",  # Birthdate
                 "0010|0040",  # Sex
+                "0010|1010",  # Age (with Y)
             ],
             'mri': [
                 "0018|0080",  # Repetition Time (TR)

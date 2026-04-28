@@ -30,7 +30,16 @@ def dicom2nii(a, logger):
 
     logger.info(f"Specified ID globber: {a.idglobber}")
     logger.info(f"Use patient ID: {a.usepid}")
-    ids = a.idlist.split(',') if not a.idlist is None else None
+    
+    # check if idlist is a string representation of a list or a single ID, and convert to list accordingly
+    if a.idlist is None:
+        ids = None
+    elif a.idlist.strip().startswith('['):
+        ids = ast.literal_eval(a.idlist.strip())
+    else:
+        ids = [s.strip() for s in a.idlist.split(',')]
+        
+    # Get all DICOM directories based on the specified depth
     dicom_dirs = preprocessing.recursive_list_dir(a.depth, a.input)
     logger.info(f"Dirs:\n{dicom_dirs}")
 
@@ -48,6 +57,7 @@ def dicom2nii(a, logger):
                     prefix = a.prefix,
                     regex_replace = _str_to_dict(a.regex_replace),
                     custom_filename_format=a.custom_filename_format,
+                    glob_id_from_directory=a.glob_id_from_directory,
                     debug = a.debug,
                     dump_meta_data = a.dump_dicom_tags)
 
@@ -86,13 +96,18 @@ def dicom2nii(a, logger):
 @click.option('--custom-filename-format', type=str, default=None,
               help='Custom format for building name of output file by dicom tags. Example: "`0008|103e`-`1030|2003`" '
                    'creates "PROTOCOL_NAME-TAG_VALUE" format.')
+@click.option('--glob-id-from-directory', 'glob_id_from_directory', is_flag=True,
+              help='Walk all parent directory components (fullmatch, leaf-first) to extract the ID, '
+                   'honouring capture group 1 when present. Mirrors the dicom-tag-printer behaviour. '
+                   'By default only the leaf folder basename is searched with re.search.')
 @click.option('--log', is_flag=True,
               help='Keep log file under ./dicom2nii.log')
 @click.option('--verbose', is_flag=True,
               help='Debug log messages')
 def console_entry(input_dir, output_dir, depth, idglobber, num_workers,
                   check_image_type_tag, dump_dicom_tags, debug, prefix,
-                  idlist, usefname, usepid, addtime, regex_replace,custom_filename_format, log, verbose):
+                  idlist, usefname, usepid, addtime, regex_replace, custom_filename_format,
+                  glob_id_from_directory, log, verbose):
     """Convert DICOM files to NIfTI format."""
     # Create a namespace object similar to argparse.Namespace for compatibility
     from types import SimpleNamespace
@@ -112,6 +127,7 @@ def console_entry(input_dir, output_dir, depth, idglobber, num_workers,
         addtime=addtime,
         regex_replace=regex_replace,
         custom_filename_format=custom_filename_format,
+        glob_id_from_directory=glob_id_from_directory,
         log=log,
         verbose=verbose
     )
