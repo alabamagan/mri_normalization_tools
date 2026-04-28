@@ -257,7 +257,7 @@ class MNTSLogger(object):
                 return handler
         else:
             if self.use_rich_stream:
-                if not MNTSLogger.global_console is None:
+                if MNTSLogger.global_console is None:
                     console = Console(
                         color_system="truecolor",
                         soft_wrap=True,

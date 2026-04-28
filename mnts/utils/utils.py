@@ -1,12 +1,13 @@
 import pandas as pd
 from pathlib import Path
 import re
-import warnings
 from shutil import *
 from pprint import pformat, pprint
+from typing import *
+from rich.console import Console
+from rich.table import Table
 from ..mnts_logger import MNTSLogger
 from .sequence_check import unify_mri_sequence_name
-from typing import *
 
 __all__ = ['repeat_zip', 'organize_directory']
 
@@ -44,7 +45,11 @@ def repeat_zip(*args):
 
 def organize_directory(d: Union[Path, str],
                        target_dir: Optional[Union[Path, str]] = None,
-                       regpat: Optional[str] = None, warn_duplicate: bool = False):
+                       regpat: Optional[str] = None,
+                       warn_duplicate: bool = False,
+                       dry_run: bool = False,
+                       recursive: bool = True,
+                       logger: Optional[MNTSLogger] = None):
     r"""Organizes a directory of NIfTI image files into subdirectories.
 
     This function takes a directory path as input and organizes NIfTI image
@@ -65,6 +70,16 @@ def organize_directory(d: Union[Path, str],
             If True, issues a warning when
             duplicate image files for the same patient ID and modality are
             found. Defaults to `False`.
+        dry_run (bool, Optional):
+            If True, prints a formatted plan of all moves without executing
+            them. No files or directories are created. Defaults to `False`.
+        recursive (bool, Optional):
+            If True, searches subdirectories recursively for NIfTI files.
+            If False, only files directly inside `d` are processed.
+            Defaults to `True`.
+        logger (MNTSLogger, Optional):
+            Logger instance to use. If None, falls back to
+            ``MNTSLogger['utils']``. Defaults to `None`.
 
     Raises:
         TypeError:
@@ -98,6 +113,8 @@ def organize_directory(d: Union[Path, str],
     if not d.is_dir():
         raise FileNotFoundError(f"Cannot found directory: {str(p.absolute())}")
 
+    _logger = cast(MNTSLogger, logger or MNTSLogger['utils'])
+
     repat = regpat or r"(?P<PatientID>[\w\d]+)-(?P<Modality>[-\w\+\.\(\)]+)\+(?P<SequenceID>\d+).*"
     target_dir = target_dir or d
 
@@ -105,21 +122,20 @@ def organize_directory(d: Union[Path, str],
 
     # Glob all nii files within `d`
     rows = []
-    for _nii_file in forganize_dir.rglob("*nii.gz"):
+    for _nii_file in (forganize_dir.rglob if recursive else forganize_dir.glob)("*nii.gz"):
         _fname = _nii_file.name
         mo = re.search(repat, _fname)
-        if not mo is None:
+        if mo is not None:
             groupdict = mo.groupdict()
             groupdict['fname'] = _fname
             groupdict['file_dir'] = _nii_file
             rows.append(pd.Series(groupdict))
         else:
-            warnings.warn(f"Cannot process: {_fname}")
+            _logger.warning(f"Cannot process: {_fname}")
     df = pd.concat(rows, axis=1).T
     df.set_index('fname', inplace=True, drop=True)
 
     # Map sequence name to unified modality name
-    mapping = {}
     df['Unified Modality'] = df['Modality'].apply(unify_mri_sequence_name)
 
     # Sanity check if there's image of same patient having same unified modliaty name
@@ -130,20 +146,33 @@ def organize_directory(d: Union[Path, str],
         if len(duplicates):
             msg = "The following cases presents duplicates: \n"
             msg += pformat(duplicates.to_string())
-            warnings.warn(msg)
+            _logger.warning(msg)
 
     # iterate and put files where they belong
-    for name, row in df.iterrows():
-        src_dir = row['file_dir']
-        mov_to = target_dir / row['Unified Modality']
-        if not mov_to.is_dir():
-            mov_to.mkdir(exist_ok=True, parents=True)
+    if dry_run:
+        plan = [(row['file_dir'], target_dir / row['Unified Modality'])
+                for name, row in df.iterrows()
+                if row['file_dir'].parent != target_dir / row['Unified Modality']]
+        _logger.info(f"Dry run — {len(plan)} file(s) would be moved:")
+        console = MNTSLogger.global_console or Console(stderr=True)
+        table = Table(show_header=True, header_style="bold", box=None, pad_edge=False, show_edge=False)
+        table.add_column("Source", style="cyan", no_wrap=True)
+        table.add_column("", style="bold white", width=5, justify="center")
+        table.add_column("Destination", style="green", no_wrap=True)
+        for src, dst in plan:
+            table.add_row(str(src), "->", str(dst))
+        console.print(table)
+    else:
+        for name, row in df.iterrows():
+            src_dir = row['file_dir']
+            mov_to = target_dir / row['Unified Modality']
+            if not mov_to.is_dir():
+                mov_to.mkdir(exist_ok=True, parents=True)
 
-        # print(row)
-        if not src_dir.parent == (mov_to / name):
-            MNTSLogger['utils'].info(f"Moving {src_dir} -> {mov_to / name}")
-            try:
-                move(str(src_dir), mov_to)
-            except Exception as e:
-                warnings.warn(f"Error when trying to move: {name}; {e}")
+            if src_dir.parent != mov_to:
+                _logger.info(f"Moving {src_dir} -> {mov_to / name}")
+                try:
+                    move(str(src_dir), mov_to)
+                except Exception as e:
+                    _logger.warning(f"Error when trying to move: {name}; {e}")
     return df
