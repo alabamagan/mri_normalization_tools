@@ -208,6 +208,10 @@ class MNTSLogger(object):
             else MNTSLogger.global_logger._logger.level
         )
 
+        # Prevent log records from propagating to the root logger, which would
+        # cause double printing when a runner (e.g. Guild) attaches its own root handler.
+        self._logger.propagate = False
+
         # Put this logger in all_logger
         MNTSLogger.all_loggers[logger_name] = self
 

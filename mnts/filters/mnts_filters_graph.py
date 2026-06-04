@@ -487,7 +487,7 @@ class MNTSFilterGraph(object):
         targets = []
         for n in self._exits:
             out_d = output_directory[n]
-            out_im_name = out_d.joinpath(output_prefix).resolve().__str__()
+            out_im_name = out_d.joinpath(output_prefix).with_suffix('.nii.gz').resolve().__str__()
             targets.append(Path(out_im_name))
         return all([t.exists() for t in targets])
 
