@@ -132,6 +132,9 @@ def organize_directory(d: Union[Path, str],
             rows.append(pd.Series(groupdict))
         else:
             _logger.warning(f"Cannot process: {_fname}")
+    if not rows:
+        _logger.warning(f"No valid files found in {forganize_dir} matching pattern '{repat}'. Nothing to move.")
+        return pd.DataFrame()
     df = pd.concat(rows, axis=1).T
     df.set_index('fname', inplace=True, drop=True)
 
