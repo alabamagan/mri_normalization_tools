@@ -194,13 +194,13 @@ class Dcm2NiiConverter:
     def __call__(self):
         try:
             self.create_directory()
-            self.process_folder()
+            return self.process_folder()
         except Exception as e:
             self.logger.exception(e)
             return 1
 
     def Execute(self):
-        self.__call__()
+        return self.__call__()
 
     def create_directory(self):
         r"""Makes a directory if it does not exist.
@@ -361,8 +361,8 @@ class Dcm2NiiConverter:
         # Check ID list and drop if input is not in idlist (not None). This is based on result of idglobber
         if not self.idlist is None:
             if not self.id_from_path in self.idlist:
-                self.logger.info(f"Skipping {self.id_from_path} because target not in idlist.")
-                return
+                self.logger.debug(f"Skipping {self.id_from_path} because target not in idlist.")
+                return self.id_from_path, 0
 
         self.logger.debug(f"Reading from: {f}")
         series = sitk.ImageSeriesReader_GetGDCMSeriesIDs(f)
@@ -370,6 +370,7 @@ class Dcm2NiiConverter:
         if not len(series):
             self.logger.warning(f"No series was found in {f}")
 
+        n_written = 0
         for ss in series:
             # Read file
             outimage, dcm_files = self.read_images(f, ss)
@@ -399,6 +400,7 @@ class Dcm2NiiConverter:
                 # put some of the meta into the nifti header
                 outimage.SetMetaData('intent_name', dcm_tags['0010|0020'].rstrip())
                 sitk.WriteImage(outimage, constructed_outname)
+                n_written += 1
             elif isinstance(outimage, dict):
                 self.logger.info(f"Writing multiple files: {pprint.pformat(outimage.keys())}")
                 for key, img in outimage.items():
@@ -412,6 +414,7 @@ class Dcm2NiiConverter:
                         _outname = constructed_outname.replace('DIXON', 'DIXON-' + key)
                     self.logger.info(f"Writing {_outname}")
                     sitk.WriteImage(img, _outname)
+                    n_written += 1
 
             # Write metadata
             if self.dump_meta_data:
@@ -420,7 +423,7 @@ class Dcm2NiiConverter:
                     self.logger.warning(f"Overwriting {str(meta_data_dir)}")
                 with open(str(meta_data_dir), 'w') as jf:
                     json.dump(dcm_tags, jf)
-        pass
+        return self.id_from_path, n_written
 
     def read_images(self, f, ss) -> Tuple[sitk.Image, List[str]]:
         r"""Read images from folder `f` that is identified by SID `ss`
@@ -593,7 +596,11 @@ def dicom2nii(folder: str,
                                      dump_meta_data=dump_meta_data,
                                      custom_filename_format=custom_filename_format,
                                      glob_id_from_directory=glob_id_from_directory)
-        converter.Execute()
+        result = converter.Execute()
+        if isinstance(result, tuple):
+            pid, n = result
+            MNTSLogger.global_logger.info(f"ID: {pid} | Files written: {n}")
+        return result
     except Exception as e:
         MNTSLogger.global_logger.exception(e)
         return 1
@@ -627,30 +634,38 @@ def batch_dicom2nii(folderlist, out_dir,
                        out_dir=out_dir,
                        **kwargs)
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(func, f): f for f in folderlist}
+        if MNTSLogger.global_console is None:
+            raise RuntimeError("MNTSLogger.global_console is None. Initialize a MNTSLogger before calling batch_dicom2nii.")
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                transient=True,
-                console=MNTSLogger.global_console
-            ) as progress:
-                task = progress.add_task("Reading from source directory ...", total=len(folderlist))
+        with MNTSLogger.worker_log_context() as (log_queue, worker_init):
+            with ProcessPoolExecutor(max_workers=workers, initializer=worker_init, initargs=(log_queue,)) as executor:
+                futures = {executor.submit(func, f): f for f in folderlist}
 
-                for future in as_completed(futures):
-                    f = futures[future]
-                    try:
-                        future.result(timeout=60)  # fifteen min
-                        logger.info(f"Completed: {f}")
-                    except TimeoutError:
-                        logger.error(f"Task timeout for {f}")
-                    except Exception as e:
-                        logger.exception(f"Error processing {f}: {e}")
-                    finally:
-                        progress.advance(task)
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    MofNCompleteColumn(),
+                    transient=True,
+                    console=MNTSLogger.global_console
+                ) as progress:
+                    task = progress.add_task("Reading from source directory ...", total=len(folderlist))
+
+                    for future in as_completed(futures):
+                        f = futures[future]
+                        try:
+                            result = future.result(timeout=60)  # fifteen min
+                            if isinstance(result, tuple):
+                                pid, n = result
+                                logger.info(f"Completed: {f} | ID: {pid} | Files written: {n}")
+                            else:
+                                logger.info(f"Completed: {f}")
+                        except TimeoutError:
+                            logger.error(f"Task timeout for {f}")
+                        except Exception as e:
+                            logger.exception(f"Error processing {f}: {e}")
+                        finally:
+                            progress.advance(task)
     else:
         for f in folderlist:
             dicom2nii(f, out_dir=out_dir, **kwargs)
