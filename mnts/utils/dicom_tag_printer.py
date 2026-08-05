@@ -12,7 +12,8 @@ Author: MRI Normalization Tools
 import os
 import re
 import json
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import itertools
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from pathlib import Path
 from typing import List, Dict, Union, Optional, Any
 from collections import defaultdict
@@ -623,7 +624,7 @@ class DicomTagPrinter:
             if isinstance(tag, str):
                 group, elem = tag.split("|")
                 tag = (int(group, 16) << 16) | int(elem, 16)
-            elif isinstance(tag, BaseTag):
+            elif isinstance(tag, DicomTag):
                 tag = int(tag)
             elif isinstance(tag, tuple):
                 tag = (tag[0] << 16) | tag[1]
@@ -637,59 +638,116 @@ class DicomTagPrinter:
 
     @staticmethod
     def _list_candidate_files(input_path: Path, glob_pattern: str,
-                              recursive: bool) -> List[Path]:
+                              recursive: bool,
+                              max_workers: Optional[int] = None) -> List[Path]:
         """Collect candidate file paths from *input_path*.
 
-        This is the first (fast) phase of file discovery — it enumerates paths
-        using :py:meth:`Path.rglob` or :py:meth:`Path.iterdir` without
-        performing any expensive content-based checks.
+        Uses :func:`os.scandir` instead of :meth:`Path.rglob` to avoid
+        redundant ``stat`` calls — ``DirEntry`` objects carry ``is_file`` /
+        ``is_dir`` state from the underlying OS call at no extra cost.  When
+        *recursive* is ``True`` the immediate subdirectories of *input_path*
+        are distributed across a :class:`~concurrent.futures.ThreadPoolExecutor`
+        so multiple subtrees are walked in parallel (threads are used rather
+        than processes because directory listing is I/O-bound and benefits from
+        overlapping wait time without subprocess-spawn overhead).
 
         Args:
             input_path: File or directory to search.
-            glob_pattern: Glob pattern for ``rglob`` / ``iterdir`` filtering
-                (e.g. ``'*'`` or ``'*.json'``).
+            glob_pattern: Glob-style filter (``'*'`` = all files,
+                ``'*.<ext>'`` = files with that extension).
             recursive: Whether to descend into subdirectories.
+            max_workers: Thread-pool size.  ``None`` lets Python choose
+                ``min(32, cpu_count + 4)``.
 
         Returns:
             List of candidate file paths (unsorted).
         """
         if input_path.is_file():
             return [input_path]
-
         if not input_path.is_dir():
             return []
 
-        if recursive:
-            return [fp for fp in input_path.rglob(glob_pattern) if fp.is_file()]
-        else:
-            return [fp for fp in input_path.iterdir()
-                    if fp.is_file() and fp.match(glob_pattern)]
+        # Derive a suffix filter from patterns like '*.json'; '' means no filter.
+        suffix_filter = ('.' + glob_pattern.rsplit('.', 1)[-1]).lower() if '.' in glob_pattern else ''
+
+        def _scan_tree(root: Path) -> List[Path]:
+            """DFS scan of *root* using an explicit stack (avoids Python recursion limit)."""
+            local: List[Path] = []
+            stack = [root]
+            while stack:
+                d = stack.pop()
+                try:
+                    with os.scandir(d) as it:
+                        for entry in it:
+                            if entry.is_file(follow_symlinks=False):
+                                if not suffix_filter or entry.name.lower().endswith(suffix_filter):
+                                    local.append(Path(entry.path))
+                            elif recursive and entry.is_dir(follow_symlinks=False):
+                                stack.append(Path(entry.path))
+                except (OSError, PermissionError):
+                    pass
+            return local
+
+        # One pass over the root to collect root-level files and seed subdirs.
+        root_files: List[Path] = []
+        subdirs: List[Path] = []
+        try:
+            with os.scandir(input_path) as it:
+                for entry in it:
+                    if entry.is_file(follow_symlinks=False):
+                        if not suffix_filter or entry.name.lower().endswith(suffix_filter):
+                            root_files.append(Path(entry.path))
+                    elif recursive and entry.is_dir(follow_symlinks=False):
+                        subdirs.append(Path(entry.path))
+        except (OSError, PermissionError):
+            return root_files
+
+        if not subdirs:
+            return root_files
+
+        # Fan out: one task per top-level subdirectory, each thread owns its subtree.
+        # Progress uses a spinner (no total) and prints each completed directory
+        # above the spinner line via progress.console.print(), which Rich intercepts
+        # so it never tears the live display.
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+            console=MNTSLogger.global_console,
+        ) as progress:
+            progress.add_task("Scanning directories ...", total=None)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_scan_tree, d): d for d in subdirs}
+                for future in as_completed(futures):
+                    d = futures[future]
+                    progress.console.print(f"  {d}")
+                    root_files.extend(future.result())
+
+        return root_files
     
     def find_dicom_directories(self, input_path: Union[str, Path],
-                              recursive: bool = True) -> List[Path]:
+                              recursive: bool = True,
+                              max_workers: Optional[int] = None) -> List[Path]:
         """Find all directories that contain at least one DICOM file.
+
+        Delegates DICOM validation to :meth:`find_dicom_files`, which runs
+        validation in parallel, then collects unique parent directories.
 
         Args:
             input_path: File or directory to search.
             recursive: Whether to descend into subdirectories.
+            max_workers: Worker count passed through to :meth:`find_dicom_files`.
 
         Returns:
             Sorted list of directory paths that contain DICOM files.
         """
         input_path = Path(input_path)
-        directories = set()
-        
+
         if input_path.is_file():
-            if self.is_dicom_file(input_path):
-                directories.add(input_path.parent)
-        elif input_path.is_dir():
-            candidates = self._list_candidate_files(input_path, '*', recursive)
-            # Collect the parent directory of every confirmed DICOM file
-            for candidate in candidates:
-                if candidate.is_file() and self.is_dicom_file(candidate):
-                    directories.add(candidate.parent)
-        
-        return sorted(list(directories))
+            return [input_path.parent] if self.is_dicom_file(input_path) else []
+
+        dicom_files = self.find_dicom_files(input_path, recursive, max_workers)
+        return sorted({f.parent for f in dicom_files})
 
     def find_dicom_files(self, input_path: Union[str, Path],
                          recursive: bool = True,
@@ -715,7 +773,8 @@ class DicomTagPrinter:
             Sorted list of DICOM file paths.
         """
         input_path = Path(input_path)
-        candidates = self._list_candidate_files(input_path, '*', recursive)
+        candidates = self._list_candidate_files(input_path, '*', recursive,
+                                                max_workers=max_workers)
 
         if not candidates:
             return []
@@ -732,23 +791,44 @@ class DicomTagPrinter:
             BarColumn(),
             MofNCompleteColumn(),
             transient=True,
+            console=MNTSLogger.global_console,
         ) as progress:
             task = progress.add_task("Scanning for DICOM files …",
                                      total=len(candidates))
 
-            with ProcessPoolExecutor(max_workers=max_workers) as pool:
-                future_to_path = {
-                    pool.submit(_is_dicom_file_worker, fp, backend): fp
-                    for fp in candidates
-                }
-                for future in as_completed(future_to_path):
-                    fp = future_to_path[future]
-                    try:
-                        if future.result():
-                            found.append(fp)
-                    except Exception:
-                        self.logger.debug(f"is_dicom_file raised for {fp}")
-                    progress.advance(task)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                # Sliding-window submission: keep at most `window` futures in
+                # flight at any time.  Submitting all candidates upfront builds
+                # a dict of N Future objects before any result arrives, and
+                # as_completed() must register callbacks on all N futures —
+                # both cost grow with list length and cause the slowdown seen
+                # on large datasets.
+                n_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+                window = n_workers * 4
+                pending: dict = {}
+                iterator = itertools.islice(iter(candidates), len(candidates))
+
+                # Seed the window
+                for fp in itertools.islice(iterator, window):
+                    f = pool.submit(_is_dicom_file_worker, fp, backend)
+                    pending[f] = fp
+
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        fp = pending.pop(f)
+                        try:
+                            if f.result():
+                                found.append(fp)
+                        except Exception:
+                            self.logger.debug(f"is_dicom_file raised for {fp}")
+                        progress.advance(task)
+                        # Refill: one new submission per completion keeps the
+                        # window full without ever exceeding it.
+                        next_fp = next(iterator, None)
+                        if next_fp is not None:
+                            nf = pool.submit(_is_dicom_file_worker, next_fp, backend)
+                            pending[nf] = next_fp
 
         return sorted(found)
 
@@ -1140,7 +1220,7 @@ class DicomTagPrinter:
 
         if group_by_series:
             # Directory-first mode: discover directories and process each in parallel
-            directories = self.find_dicom_directories(input_path, recursive)
+            directories = self.find_dicom_directories(input_path, recursive, max_workers)
 
             if not directories:
                 self.logger.warning("No DICOM directories found")

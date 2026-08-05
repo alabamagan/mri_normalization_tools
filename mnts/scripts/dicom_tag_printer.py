@@ -4,6 +4,92 @@ from ..utils.dicom_tag_printer import *
 from ..mnts_logger import MNTSLogger
 import sys
 
+
+def write_sqlite(df, output_path, cohort_name):
+    """Write DICOM tag DataFrame to a SQLite database.
+
+    Creates (or updates) two tables:
+    - ``dcm_tags``: one row per (SID, series_code), all tag columns as TEXT.
+    - ``cohort``:   maps each SID to *cohort_name*.
+
+    Existing rows are updated in-place (upsert); duplicate SIDs in ``cohort``
+    for the same cohort_name are silently ignored.
+    """
+    import sqlite3
+    import pandas as pd
+
+    path = Path(output_path).with_suffix('.db')
+
+    # Flatten MultiIndex so SubjectID / Series Number become plain columns
+    if isinstance(df.index, pd.MultiIndex):
+        df = df.reset_index()
+
+    # Resolve which column becomes SID
+    if 'SubjectID' in df.columns:
+        sid_col = 'SubjectID'
+    elif 'SeriesUID' in df.columns:
+        sid_col = 'SeriesUID'
+    else:
+        sid_col = 'FilePath'
+
+    # Resolve which column becomes series_code
+    series_col = 'Series Number' if 'Series Number' in df.columns else None
+
+    out = df.rename(columns={sid_col: 'SID'})
+    if series_col:
+        out = out.rename(columns={series_col: 'series_code'})
+    else:
+        out.insert(1, 'series_code', range(len(out)))
+    out['series_code'] = out['series_code'].astype(str)
+
+    # Drop bookkeeping columns that should not become tag columns
+    drop = [c for c in ('FileCount', 'RepresentativeFile', 'SeriesUID', 'FilePath') if c in out.columns]
+    out = out.drop(columns=drop)
+
+    tag_cols = [c for c in out.columns if c not in ('SID', 'series_code')]
+    col_defs = ', '.join(f'"{c}" TEXT' for c in tag_cols)
+
+    with sqlite3.connect(path) as con:
+        con.execute(
+            f'CREATE TABLE IF NOT EXISTS dcm_tags '
+            f'(SID TEXT NOT NULL, series_code TEXT NOT NULL'
+            f'{", " + col_defs if col_defs else ""}, '
+            f'PRIMARY KEY (SID, series_code))'
+        )
+        con.execute(
+            'CREATE TABLE IF NOT EXISTS cohort '
+            '(SID TEXT NOT NULL, cohort_name TEXT NOT NULL, '
+            'PRIMARY KEY (SID, cohort_name))'
+        )
+
+        # Schema evolution: add columns present in this batch but not yet in the table
+        existing_cols = {r[1] for r in con.execute('PRAGMA table_info(dcm_tags)')}
+        for col in tag_cols:
+            if col not in existing_cols:
+                con.execute(f'ALTER TABLE dcm_tags ADD COLUMN "{col}" TEXT')
+
+        # Upsert tag rows
+        all_cols = ['SID', 'series_code'] + tag_cols
+        placeholders = ', '.join('?' for _ in all_cols)
+        col_list = ', '.join(f'"{c}"' for c in all_cols)
+        update_set = ', '.join(f'"{c}"=excluded."{c}"' for c in tag_cols)
+        upsert_sql = (
+            f'INSERT INTO dcm_tags ({col_list}) VALUES ({placeholders})'
+            + (f' ON CONFLICT(SID, series_code) DO UPDATE SET {update_set}' if tag_cols else
+               ' ON CONFLICT(SID, series_code) DO NOTHING')
+        )
+        rows = out[all_cols].astype(str).values.tolist()
+        con.executemany(upsert_sql, rows)
+
+        # Upsert cohort membership
+        sids = out['SID'].unique().tolist()
+        con.executemany(
+            'INSERT INTO cohort (SID, cohort_name) VALUES (?, ?) '
+            'ON CONFLICT(SID, cohort_name) DO NOTHING',
+            [(s, cohort_name) for s in sids]
+        )
+
+
 @click.command()
 @click.argument(
     'input_path',
@@ -23,7 +109,7 @@ import sys
     required=False,
     callback=validate_tag_format,
     help='DICOM tags to print (format: 0008|103e). Can specify multiple tags. Use "default"'
-         ' for default set of tags including TE/TR/Machine Name/Tesla'
+         ' for default set of tags including TE/TR/Machine Name/Tesla, or "mri" for MRI-specific tags'
 )
 @click.option(
     '--recursive/--no-recursive',
@@ -37,9 +123,15 @@ import sys
 )
 @click.option(
     '-f', '--format',
-    type=click.Choice(['table', 'csv', 'json', 'excel']),
+    type=click.Choice(['table', 'csv', 'json', 'excel', 'sqlite']),
     default='table',
     help='Output format (default: table)'
+)
+@click.option(
+    '--cohort-name', '-c',
+    type=str,
+    default=None,
+    help='Cohort label written to the cohort table in the SQLite database. Required when --format sqlite.'
 )
 @click.option(
     '-b', '--backend',
@@ -92,7 +184,8 @@ def dicom_tag_printer_cli(
         json_source: bool,
         id_globber: str,
         verbose: bool,
-        debug: bool
+        debug: bool,
+        cohort_name: str,
 ):
     """
     DICOM Tag Printer - Print specific tag information from DICOM files or JSON tag dumps.
@@ -128,6 +221,9 @@ def dicom_tag_printer_cli(
         >>>  # Read specific tags from JSON files
         >>>  dicom-tag-printer /path/to/json_dir --json-source -t 0008|103e -t 0010|0020
     """
+    if format == 'sqlite' and cohort_name is None:
+        raise click.UsageError("--cohort-name / -c is required when --format sqlite is used.")
+
     # Print configuration if verbose
     if verbose:
         click.echo("Configuration:")
@@ -200,17 +296,20 @@ def dicom_tag_printer_cli(
             ]
         }
 
-        real_tag_list = []
-        for tag in tag_list:
-            if tag in map:
-                real_tag_list.extend(map[tag])
-            else:
-                real_tag_list.append(tag)
+        if tag_list is not None:
+            real_tag_list = []
+            for tag in tag_list:
+                if tag in map:
+                    real_tag_list.extend(map[tag])
+                else:
+                    real_tag_list.append(tag)
+        else:
+            real_tag_list = None
 
         if json_source:
             tags = printer.get_tags_from_json(
                 input_path=input_path,
-                tags=tag_list,
+                tags=real_tag_list,
                 recursive=recursive,
                 output_format=format,
                 id_globber=id_globber,
@@ -247,6 +346,11 @@ def dicom_tag_printer_cli(
             printer.logger.warning(f"This path of outputing json is not verified")
             printer.logger.info(f"Writing to: {output.with_suffix('.json')}")
             json.dumps(tags.to_dict('records'), ensure_ascii=False, indent=2)
+        elif format == 'sqlite' and tags is not None:
+            db_path = output.with_suffix('.db')
+            printer.logger.info(f"Writing to: {db_path}")
+            write_sqlite(tags, output, cohort_name)
+            printer.logger.info(f"Done. Cohort '{cohort_name}' written to {db_path}")
 
     except KeyboardInterrupt:
         click.echo("\nOperation interrupted by user")
