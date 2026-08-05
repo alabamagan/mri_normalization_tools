@@ -14,16 +14,41 @@ import multiprocessing as mpi
 __all__ = ['recursive_list_dir']
 
 def recursive_list_dir(searchDepth, rootdir):
-    r"""
-    Recursively list directories only.
-    """
+    r"""Recursively list directories that contain at least one file.
 
+    Uses :func:`os.scandir` for faster enumeration (avoids redundant ``stat``
+    calls) and honours *searchDepth* — previously this parameter was accepted
+    but silently ignored.
+
+    Args:
+        searchDepth (int): Maximum recursion depth.  0 = only *rootdir*
+            itself; 1 = *rootdir* and its immediate subdirectories; etc.
+        rootdir (str or Path): Root directory to start from.
+
+    Returns:
+        List[str]: Absolute paths of directories containing at least one file.
+    """
     DD = []
-    for r, d, f in os.walk(rootdir, followlinks=False):
-        if len(f) != 0:
-            # DD.extend([os.path.join(r, dd) for dd in d])
-            DD.append(r)
-    # DD.extend(nextlayer)
+
+    def _scan(path, depth):
+        has_files = False
+        subdirs = []
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if entry.is_file(follow_symlinks=False):
+                        has_files = True
+                    elif entry.is_dir(follow_symlinks=False):
+                        subdirs.append(entry.path)
+        except (OSError, PermissionError):
+            return
+        if has_files:
+            DD.append(str(path))
+        if depth < searchDepth:
+            for subdir in subdirs:
+                _scan(subdir, depth + 1)
+
+    _scan(str(rootdir), 0)
     return DD
 
 
