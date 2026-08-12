@@ -640,24 +640,22 @@ class DicomTagPrinter:
     def _list_candidate_files(input_path: Path, glob_pattern: str,
                               recursive: bool,
                               max_workers: Optional[int] = None) -> List[Path]:
-        """Collect candidate file paths from *input_path*.
+        """Collect all candidate file paths from *input_path* into a list.
 
-        Uses :func:`os.scandir` instead of :meth:`Path.rglob` to avoid
-        redundant ``stat`` calls — ``DirEntry`` objects carry ``is_file`` /
-        ``is_dir`` state from the underlying OS call at no extra cost.  When
-        *recursive* is ``True`` the immediate subdirectories of *input_path*
-        are distributed across a :class:`~concurrent.futures.ThreadPoolExecutor`
-        so multiple subtrees are walked in parallel (threads are used rather
-        than processes because directory listing is I/O-bound and benefits from
-        overlapping wait time without subprocess-spawn overhead).
+        Runs as a distinct phase before any DICOM checking so callers know the
+        total file count upfront (needed for a determinate progress bar) and
+        can show per-directory feedback while scanning.
+
+        Uses :func:`os.scandir` for efficient traversal and fans out top-level
+        subdirectories across a :class:`~concurrent.futures.ThreadPoolExecutor`
+        so multiple subtrees are scanned in parallel.
 
         Args:
             input_path: File or directory to search.
             glob_pattern: Glob-style filter (``'*'`` = all files,
                 ``'*.<ext>'`` = files with that extension).
             recursive: Whether to descend into subdirectories.
-            max_workers: Thread-pool size.  ``None`` lets Python choose
-                ``min(32, cpu_count + 4)``.
+            max_workers: Thread-pool size.  ``None`` lets Python choose.
 
         Returns:
             List of candidate file paths (unsorted).
@@ -667,11 +665,9 @@ class DicomTagPrinter:
         if not input_path.is_dir():
             return []
 
-        # Derive a suffix filter from patterns like '*.json'; '' means no filter.
         suffix_filter = ('.' + glob_pattern.rsplit('.', 1)[-1]).lower() if '.' in glob_pattern else ''
 
         def _scan_tree(root: Path) -> List[Path]:
-            """DFS scan of *root* using an explicit stack (avoids Python recursion limit)."""
             local: List[Path] = []
             stack = [root]
             while stack:
@@ -688,27 +684,22 @@ class DicomTagPrinter:
                     pass
             return local
 
-        # One pass over the root to collect root-level files and seed subdirs.
-        root_files: List[Path] = []
+        all_files: List[Path] = []
         subdirs: List[Path] = []
         try:
             with os.scandir(input_path) as it:
                 for entry in it:
                     if entry.is_file(follow_symlinks=False):
                         if not suffix_filter or entry.name.lower().endswith(suffix_filter):
-                            root_files.append(Path(entry.path))
+                            all_files.append(Path(entry.path))
                     elif recursive and entry.is_dir(follow_symlinks=False):
                         subdirs.append(Path(entry.path))
         except (OSError, PermissionError):
-            return root_files
+            return all_files
 
         if not subdirs:
-            return root_files
+            return all_files
 
-        # Fan out: one task per top-level subdirectory, each thread owns its subtree.
-        # Progress uses a spinner (no total) and prints each completed directory
-        # above the spinner line via progress.console.print(), which Rich intercepts
-        # so it never tears the live display.
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -716,14 +707,29 @@ class DicomTagPrinter:
             console=MNTSLogger.global_console,
         ) as progress:
             progress.add_task("Scanning directories ...", total=None)
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(_scan_tree, d): d for d in subdirs}
-                for future in as_completed(futures):
-                    d = futures[future]
-                    progress.console.print(f"  {d}")
-                    root_files.extend(future.result())
+            pool = ThreadPoolExecutor(max_workers=max_workers)
+            try:
+                n_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+                window = n_workers * 4
+                pending: dict = {}
+                iterator = iter(subdirs)
 
-        return root_files
+                for d in itertools.islice(iterator, window):
+                    pending[pool.submit(_scan_tree, d)] = d
+
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        d = pending.pop(f)
+                        progress.console.print(f"  {d}")
+                        all_files.extend(f.result())
+                        next_d = next(iterator, None)
+                        if next_d is not None:
+                            pending[pool.submit(_scan_tree, next_d)] = next_d
+            finally:
+                pool.shutdown(wait=False)
+
+        return all_files
     
     def find_dicom_directories(self, input_path: Union[str, Path],
                               recursive: bool = True,
@@ -773,14 +779,16 @@ class DicomTagPrinter:
             Sorted list of DICOM file paths.
         """
         input_path = Path(input_path)
+
+        # Phase 1: collect all candidate paths (shows directory scanning
+        # progress, gives us the total for a determinate progress bar).
         candidates = self._list_candidate_files(input_path, '*', recursive,
                                                 max_workers=max_workers)
-
         if not candidates:
             return []
 
-        self.logger.debug(f"Collected {len(candidates)} candidate files, "
-                          f"filtering with is_dicom_file …")
+        self.logger.debug(f"Found {len(candidates)} candidate files, "
+                          f"checking for DICOM …")
 
         found: List[Path] = []
         backend = self.backend
@@ -796,25 +804,30 @@ class DicomTagPrinter:
             task = progress.add_task("Scanning for DICOM files …",
                                      total=len(candidates))
 
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                # Sliding-window submission: keep at most `window` futures in
-                # flight at any time.  Submitting all candidates upfront builds
-                # a dict of N Future objects before any result arrives, and
-                # as_completed() must register callbacks on all N futures —
-                # both cost grow with list length and cause the slowdown seen
-                # on large datasets.
+            pool = ThreadPoolExecutor(max_workers=max_workers)
+            try:
                 n_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
                 window = n_workers * 4
                 pending: dict = {}
-                iterator = itertools.islice(iter(candidates), len(candidates))
+                iterator = iter(candidates)
 
-                # Seed the window
                 for fp in itertools.islice(iterator, window):
                     f = pool.submit(_is_dicom_file_worker, fp, backend)
                     pending[f] = fp
 
                 while pending:
-                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                   timeout=30.0)
+                    if not done:
+                        # A worker thread is hung (e.g. pydicom stuck on a
+                        # malformed file).  Skip the stuck files and move on;
+                        # shutdown(wait=False) below avoids blocking on them.
+                        for f in list(pending):
+                            fp = pending.pop(f)
+                            self.logger.warning(
+                                f"DICOM check timed out, skipping: {fp}")
+                            progress.advance(task)
+                        break
                     for f in done:
                         fp = pending.pop(f)
                         try:
@@ -823,12 +836,12 @@ class DicomTagPrinter:
                         except Exception:
                             self.logger.debug(f"is_dicom_file raised for {fp}")
                         progress.advance(task)
-                        # Refill: one new submission per completion keeps the
-                        # window full without ever exceeding it.
                         next_fp = next(iterator, None)
                         if next_fp is not None:
                             nf = pool.submit(_is_dicom_file_worker, next_fp, backend)
                             pending[nf] = next_fp
+            finally:
+                pool.shutdown(wait=False)
 
         return sorted(found)
 
@@ -877,7 +890,6 @@ class DicomTagPrinter:
         """
         input_path = Path(input_path)
         candidates = self._list_candidate_files(input_path, '*.json', recursive)
-        # For JSON the suffix check is cheap — no need for threading.
         return sorted(fp for fp in candidates if fp.suffix.lower() == '.json')
 
     # ------------------------------------------------------------------
@@ -1238,24 +1250,48 @@ class DicomTagPrinter:
                 BarColumn(),
                 MofNCompleteColumn(),
                 transient=True,
+                console=MNTSLogger.global_console,
             ) as progress:
                 task = progress.add_task("Processing directories...",
                                          total=len(directories))
-                with ProcessPoolExecutor(max_workers=max_workers) as pool:
-                    futures = {
-                        pool.submit(_process_directory_complete_worker,
-                                   dir_path, tags, backend, summarize_numeric): dir_path
-                        for dir_path in directories
-                    }
-                    
-                    for future in as_completed(futures):
-                        dir_path = futures[future]
-                        try:
-                            dir_results = future.result()
-                            results.extend(dir_results)
-                        except Exception as e:
-                            self.logger.warning(f"Error processing directory {dir_path}: {e}")
-                        progress.advance(task)
+                pool = ProcessPoolExecutor(max_workers=max_workers)
+                try:
+                    n_workers = max_workers or (os.cpu_count() or 1)
+                    window = n_workers * 4
+                    pending: dict = {}
+                    iterator = iter(directories)
+
+                    for dir_path in itertools.islice(iterator, window):
+                        f = pool.submit(_process_directory_complete_worker,
+                                        dir_path, tags, backend, summarize_numeric)
+                        pending[f] = dir_path
+
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                       timeout=120.0)
+                        if not done:
+                            for f in list(pending):
+                                dir_path = pending.pop(f)
+                                self.logger.warning(
+                                    f"Directory processing timed out, skipping: {dir_path}")
+                                progress.advance(task)
+                            break
+                        for f in done:
+                            dir_path = pending.pop(f)
+                            try:
+                                dir_results = f.result()
+                                results.extend(dir_results)
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Error processing directory {dir_path}: {e}")
+                            progress.advance(task)
+                            next_dir = next(iterator, None)
+                            if next_dir is not None:
+                                nf = pool.submit(_process_directory_complete_worker,
+                                                 next_dir, tags, backend, summarize_numeric)
+                                pending[nf] = next_dir
+                finally:
+                    pool.shutdown(wait=False)
         else:
             # File mode: discover individual DICOM files
             dicom_files = self.find_dicom_files(input_path, recursive,
@@ -1280,23 +1316,47 @@ class DicomTagPrinter:
             ) as progress:
                 task = progress.add_task("Reading DICOM tags …",
                                          total=len(dicom_files))
-                with ProcessPoolExecutor(max_workers=max_workers) as pool:
-                    future_to_path = {
-                        pool.submit(_read_dicom_tags_worker, fp, tags, backend): fp
-                        for fp in dicom_files
-                    }
-                    for future in as_completed(future_to_path):
-                        fp = future_to_path[future]
-                        tv = future.result()
-                        # For multi-frame DICOM a whole series may live in a
-                        # single file, so we need to check for the number of
-                        # frames and add it to the result
-                        num_frames = tv.pop('__num_frames__', 1)
-                        results.append({
-                            'FilePath': str(fp),
-                            **tv
-                        })
-                        progress.advance(task)
+                pool = ProcessPoolExecutor(max_workers=max_workers)
+                try:
+                    n_workers = max_workers or (os.cpu_count() or 1)
+                    window = n_workers * 4
+                    pending: dict = {}
+                    iterator = iter(dicom_files)
+
+                    for fp in itertools.islice(iterator, window):
+                        f = pool.submit(_read_dicom_tags_worker, fp, tags, backend)
+                        pending[f] = fp
+
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                       timeout=60.0)
+                        if not done:
+                            for f in list(pending):
+                                fp = pending.pop(f)
+                                self.logger.warning(
+                                    f"Tag read timed out, skipping: {fp}")
+                                progress.advance(task)
+                            break
+                        for f in done:
+                            fp = pending.pop(f)
+                            try:
+                                tv = f.result()
+                                tv.pop('__num_frames__', None)
+                                results.append({
+                                    'FilePath': str(fp),
+                                    **tv
+                                })
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Error reading tags from {fp}: {e}")
+                            progress.advance(task)
+                            next_fp = next(iterator, None)
+                            if next_fp is not None:
+                                nf = pool.submit(_read_dicom_tags_worker,
+                                                 next_fp, tags, backend)
+                                pending[nf] = next_fp
+                finally:
+                    pool.shutdown(wait=False)
 
         if id_globber:
             path_key = 'RepresentativeFile' if group_by_series else 'FilePath'
