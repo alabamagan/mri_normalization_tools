@@ -4,6 +4,15 @@ import SimpleITK as sitk
 
 __all__ = ["TypeCastNode", "DataNode"]
 
+# SimpleITK >= 2.x inserted `outputPixelType` as the 2nd positional arg to Clamp.
+# Detect once at import time so the right call path is used regardless of version.
+_SITK_CLAMP_HAS_OUTPUT_TYPE = "outputPixelType" in (sitk.Clamp.__doc__ or "")
+
+def _sitk_clamp(image: sitk.Image, lower: float, upper: float) -> sitk.Image:
+    if _SITK_CLAMP_HAS_OUTPUT_TYPE:
+        return sitk.Clamp(image, sitk.sitkUnknown, lower, upper)
+    return sitk.Clamp(image, lower, upper)
+
 class DataNode(MNTSFilter):
     r"""
     Presents whatever data stored in this node. This is useful for storing intermediate results, or other data that
@@ -95,7 +104,7 @@ class TypeCastNode(MNTSFilter):
         target_type = self._target_type if ref_img is None else ref_img.GetPixelID()
         try:
             # Overflow protection
-            range = self._overflow_protection.get(self.target_type, None)
+            range = self._overflow_protection.get(target_type, None)
             if range is not None:
                 f = sitk.MinimumMaximumImageFilter()
                 f.Execute(input)
@@ -104,7 +113,7 @@ class TypeCastNode(MNTSFilter):
                 min_val = f.GetMinimum()
 
                 if max_val > range[1] or min_val < range[0]:
-                    input = sitk.Clamp(input, *range)
+                    input = _sitk_clamp(input, range[0], range[1])
             return sitk.Cast(input, self._target_type)
         except Exception as e:
             raise ArithmeticError(f"Type cast failed in filter with parameters: {self.__str__()}") from e
