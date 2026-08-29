@@ -66,6 +66,7 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         
         # Test with default filename format (no custom format)
         output_default = tempfile.TemporaryDirectory()
+        self.addCleanup(output_default.cleanup)
         converter_default = Dcm2NiiConverter(
             str(sample1_path),
             out_dir=output_default.name,
@@ -79,6 +80,7 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         
         # Test with custom filename format
         output_custom = tempfile.TemporaryDirectory()
+        self.addCleanup(output_custom.cleanup)
         converter_custom = Dcm2NiiConverter(
             str(sample1_path),
             out_dir=output_custom.name,
@@ -104,10 +106,6 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         
         # They should be different
         self.assertNotEqual(default_name, custom_name, "Default and custom filenames should be different")
-        
-        # Clean up
-        output_default.cleanup()
-        output_custom.cleanup()
 
     def test_dcm2nii_custom_format_with_missing_tag(self):
         """Test custom format with a missing DICOM tag."""

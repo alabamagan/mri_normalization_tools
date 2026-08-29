@@ -368,7 +368,9 @@ class TestJsonDicomReader(unittest.TestCase):
         json_file = self._write_json("single.json")
         df = self.printer.get_tags_from_json(json_file, tags=["0008|0060"])
         self.assertEqual(len(df), 1)
-        self.assertEqual(df.iloc[0]["0008|0060"], "MR")
+        # build_dataframe translates raw tags to human-readable names via get_tag_name()
+        col = self.printer.get_tag_name("0008|0060")
+        self.assertEqual(df.iloc[0][col], "MR")
 
     def test_get_tags_from_json_table_no_duplicate_columns(self):
         """get_tags_from_json DataFrame has no duplicate columns"""
@@ -500,16 +502,18 @@ class TestBuildDataframe(unittest.TestCase):
         ]
         df = self.printer.build_dataframe(results, ["0008|0060"], group_by_series=False)
         self.assertIn("FilePath", df.columns)
-        self.assertIn("0008|0060", df.columns)
+        # build_dataframe translates raw tags; 0008|0060 → "Modality"
+        self.assertIn(self.printer.get_tag_name("0008|0060"), df.columns)
 
     def test_series_view_columns(self):
-        """build_dataframe in series view includes SeriesInstanceUID and tags"""
+        """build_dataframe in series view includes SeriesUID and tags"""
         results = [
-            {"SeriesInstanceUID": "1.2.3", "0008|0060": "MR"},
+            {"SeriesUID": "1.2.3", "0008|0060": "MR"},
         ]
         df = self.printer.build_dataframe(results, ["0008|0060"], group_by_series=True)
-        self.assertIn("SeriesInstanceUID", df.columns)
-        self.assertIn("0008|0060", df.columns)
+        # Index column is keyed as 'SeriesUID' (not 'SeriesInstanceUID')
+        self.assertIn("SeriesUID", df.columns)
+        self.assertIn(self.printer.get_tag_name("0008|0060"), df.columns)
 
     def test_subject_id_replaces_filepath_as_index(self):
         """When SubjectID is present, it becomes the index column instead of FilePath"""
@@ -524,7 +528,8 @@ class TestBuildDataframe(unittest.TestCase):
         """Missing tags in results are filled with 'N/A' in the DataFrame"""
         results = [{"FilePath": "/a/1.dcm"}]
         df = self.printer.build_dataframe(results, ["0008|0060"], group_by_series=False)
-        self.assertEqual(df.iloc[0]["0008|0060"], "N/A")
+        col = self.printer.get_tag_name("0008|0060")
+        self.assertEqual(df.iloc[0][col], "N/A")
 
     def test_no_duplicate_index_cols_when_tags_overlap(self):
         """If a tag name matches an index column, no duplicate appears"""
@@ -570,12 +575,13 @@ class TestAggregateSeriesTags(unittest.TestCase):
         self.assertEqual(result['0020|0013'], '1~30')
 
     def test_float_range_preserved(self):
-        """Float-valued tags are shown as min~max with decimals."""
+        """Non-integer float min is shown with decimals; integer-valued max drops them."""
         files = [Path('/s/1.dcm'), Path('/s/2.dcm')]
         side_effects = self._fake_read({'0018|0050': ['1.5', '2.0']})
         with patch.object(self.printer, 'read_dicom_tags', side_effect=side_effects):
             result = self.printer._aggregate_series_tags(files, ['0018|0050'])
-        self.assertEqual(result['0018|0050'], '1.5~2.0')
+        # _fmt_number drops the decimal for integer-valued floats (2.0 → '2')
+        self.assertEqual(result['0018|0050'], '1.5~2')
 
     def test_integer_boundaries_formatted_without_decimal(self):
         """Integer-valued floats (e.g. 1.0) are shown without decimal point."""
@@ -654,7 +660,8 @@ class TestRealJsonSampleData(unittest.TestCase):
             tags=["0008|0060", "0008|103e", "0010|0020"],
         )
         self.assertGreaterEqual(len(df), 1)
-        self.assertIn("0008|0060", df.columns)
+        # build_dataframe translates raw tags to human-readable names
+        self.assertIn(self.printer.get_tag_name("0008|0060"), df.columns)
 
     def test_id_globber_with_sample_filenames(self):
         """id_globber extracts numeric IDs from the sample filenames correctly"""

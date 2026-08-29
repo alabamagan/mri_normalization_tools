@@ -22,6 +22,9 @@ class Test_IO(unittest.TestCase):
         self.output = tempfile.TemporaryDirectory()
         self.output_dir = self.output.name
 
+    def tearDown(self) -> None:
+        self.output.cleanup()
+
     def test_pydicom_read_series(self):
         d = pydicom_read_series(self.dcm_dir)
         self.logger.info(f"Found sequeces: [{','.join(d.keys())}]")

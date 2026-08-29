@@ -82,11 +82,11 @@ class TestGraph(unittest.TestCase):
         # Create file from str
         with open('_test_graph.yaml', 'w') as f:
             f.write(test_yaml)
+        self.addCleanup(Path('_test_graph.yaml').unlink, missing_ok=True)
         G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph.yaml')
         self.assertTrue(isinstance(G,
                                    MNTSFilterGraph))
         print(G)
-        Path('_test_graph.yaml').unlink()
 
     def test_properties(self):
         # Nyul requires training
@@ -112,6 +112,7 @@ class TestGraph(unittest.TestCase):
         # Create a graph that doesn't require training
         with open('_test_graph_no_train.yaml', 'w') as f:
             f.write(test_yaml_no_train)
+        self.addCleanup(Path('_test_graph_no_train.yaml').unlink, missing_ok=True)
 
         G = MNTSFilterGraph.CreateGraphFromYAML('_test_graph_no_train.yaml')
         self.assertFalse(G.requires_training)
@@ -168,9 +169,6 @@ class TestGraph(unittest.TestCase):
         # Restore original methods
         G.load_node_states = original_load
         G.mpi_execute = original_execute
-
-        # Clean up
-        Path('_test_graph_no_train.yaml').unlink()
 
 if __name__ == '__main__':
     unittest.main()

@@ -148,9 +148,8 @@ class TestScript(unittest.TestCase):
             shutil.rmtree(str(out_path))
         pass
 
-    def teardown(self):
+    def tearDown(self):
         TestScript.clean_dir()
-        pass
 
 if __name__ == '__main__':
     unittest.main()

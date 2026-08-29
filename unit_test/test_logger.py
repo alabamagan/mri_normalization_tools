@@ -20,6 +20,7 @@ class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_custom_arguments(self):
         MNTSLogger.cleanup()
         logger = MNTSLogger(log_dir='test.log', logger_name='test', verbose=False, log_level='debug', keep_file=True)
+        self.addCleanup(logger.cleanup)
         assert logger._logger_name == 'test'
         assert logger._log_dir == str(Path('test.log').absolute())
         assert logger._verbose == False

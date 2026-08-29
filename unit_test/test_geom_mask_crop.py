@@ -4,6 +4,8 @@ Unit tests for the geom_mask_crop filter functionality.
 """
 
 import unittest
+from unittest import mock
+
 import numpy as np
 import SimpleITK as sitk
 from mnts.filters.geom import RemoveShoulder
@@ -18,6 +20,9 @@ class TestGeomMaskCrop(unittest.TestCase):
         """Set up test data."""
         self.logger = MNTSLogger['test']
         MNTSLogger.set_global_log_level('debug')
+
+    def tearDown(self):
+        self.logger.cleanup()
 
         # Create a simple 3D test image (10x10x10)
         self.test_image = sitk.Image([10, 10, 10], sitk.sitkFloat32)
@@ -54,11 +59,12 @@ class TestGeomMaskCrop(unittest.TestCase):
 
         # Calculate slice areas
         temp_filter = RemoveShoulder()
+        temp_filter._image_spacing = (1, 1, 1) # this should be extracted when calling .filter(image, seg)
         slice_areas = temp_filter._calculate_slice_areas(mask_array)
-        print(slice_areas)
 
         # Test with barrier=3 (count backwards 3 slices from end, so consider indices 0-6)
         filter_obj = RemoveShoulder(barrier=3, min_area_threshold=0.0)
+        filter_obj._image_spacing = (1, 1, 1)  # this should be extracted when calling .filter(image, seg)
         min_slice = filter_obj._find_minimum_area_slice(slice_areas)
 
         self.assertEqual(min_slice, 4)
