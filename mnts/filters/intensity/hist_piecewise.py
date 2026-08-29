@@ -372,7 +372,11 @@ class NyulNormalizer(MNTSIntensityBase, MNTSFilterRequireTraining):
         super(NyulNormalizer, self).load_state(location)
 
         f = np.load(location, allow_pickle=True)
-        tModel = f['trainedModel'].all()
+        tModel = f['trainedModel']
+        # numpy wraps the saved value in an object array; unwrap to the dict.
+        # 0-d arrays (bare dict) use .item(); 1-d arrays (list-wrapped dict) use [0].
+        if isinstance(tModel, np.ndarray):
+            tModel = tModel.item() if tModel.ndim == 0 else tModel[0]
 
         self._lower_origin = tModel['lower_origin']
         self._upper_origin = tModel['upper_origin']

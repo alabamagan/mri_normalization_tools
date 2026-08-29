@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 
 def main():
     # Set up paths
-    example_data_dir = Path("./examples/example_data")
+    example_data_dir = Path(__file__).parent / "example_data"
     output_dir = example_data_dir / "output" / "EG08_geom_mask_crop"
     output_dir.mkdir(parents=True, exist_ok=True)
 

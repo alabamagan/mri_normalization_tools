@@ -46,6 +46,8 @@ class RemoveShoulder(MNTSFilter):
         self.barrier = barrier
         self.dimension = 0 # This is now fixed
 
+        self._is_reversed = False
+
     @property
     def min_area_threshold(self):
         return self._min_area_threshold

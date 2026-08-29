@@ -340,7 +340,7 @@ def download_dicom(force: bool = False) -> bool:
 def download_examples(force: bool = False) -> bool:
     """Download the three example NIfTI files from OpenNeuro ds000105.
 
-    Files are saved to ``examples/example_data/MRI_01.nii.gz`` etc.
+    Files are saved to ``examples/example_data/MRI_01.nii.gz`` etc.¢¢
     Returns True if all files were obtained successfully.
     """
     EXAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -411,10 +411,11 @@ def main(argv=None):
     results = []
     if do_json:
         results.append(generate_json_files(force=args.force))
-    if do_nifti:
-        results.append(download_nifti(force=args.force))
-    if do_dicom:
-        results.append(download_dicom(force=args.force))
+
+    # if do_nifti:
+    #     results.append(download_nifti(force=args.force))
+    # if do_dicom:
+    #     results.append(download_dicom(force=args.force))
     if do_examples:
         results.append(download_examples(force=args.force))
 

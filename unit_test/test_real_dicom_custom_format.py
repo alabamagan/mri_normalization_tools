@@ -39,24 +39,24 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
 
     def test_real_dicom_tags_available(self):
         """Test that we can read actual DICOM tags from sample data."""
-        # Check that key tags are present
-        expected_tags = ['0008|103e', '0010|0020', '0020|0011', '0008|0020']
+        # Check that key tags are present.
+        # MR2_J2KI.dcm has Study Description (0008|1030) but not Series Description (0008|103e).
+        expected_tags = ['0008|1030', '0010|0020', '0020|0011', '0008|0020']
         for tag in expected_tags:
             self.assertIn(tag, self.real_dicom_tags, f"Expected DICOM tag {tag} not found")
-        
-        print(f"Series Description (0008|103e): {self.real_dicom_tags['0008|103e']}")
+
+        print(f"Study Description (0008|1030): {self.real_dicom_tags['0008|1030']}")
         print(f"Patient ID (0010|0020): {self.real_dicom_tags['0010|0020']}")
         print(f"Series Number (0020|0011): {self.real_dicom_tags['0020|0011']}")
         print(f"Study Date (0008|0020): {self.real_dicom_tags['0008|0020']}")
 
     def test_parse_custom_format_with_real_tags(self):
         """Test parse_custom_filename_format with real DICOM tags."""
-        # Test using actual DICOM tag values
-        format_string = "`0008|103e`-`0010|0020`"
+        # Use Study Description (0008|1030) — present in MR2_J2KI.dcm
+        format_string = "`0008|1030`-`0010|0020`"
         result = parse_custom_filename_format(format_string, self.real_dicom_tags, self.logger)
-        
-        # Expected: "ARTERIELLE-0" based on the actual tag values
-        expected = f"{self.real_dicom_tags['0008|103e']}-{self.real_dicom_tags['0010|0020']}"
+
+        expected = f"{self.real_dicom_tags['0008|1030']}-{self.real_dicom_tags['0010|0020']}"
         self.assertEqual(result, expected)
         print(f"Custom format result: {result}")
 
@@ -85,24 +85,24 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
             str(sample1_path),
             out_dir=output_custom.name,
             idglobber="sample[0-9]+",
-            custom_filename_format="`0008|103e`-`0010|0020`-`0008|0020`",
+            custom_filename_format="`0008|1030`-`0010|0020`-`0008|0020`",
             debug=True
         )
         converter_custom.Execute()
-        
+
         custom_files = list(Path(output_custom.name).glob("*.nii.gz"))
         self.assertGreater(len(custom_files), 0, "No custom files generated")
-        
+
         # Compare filenames - they should be different
         default_name = default_files[0].stem.replace('.nii', '')
         custom_name = custom_files[0].stem.replace('.nii', '')
-        
+
         print(f"Default filename: {default_name}")
         print(f"Custom filename: {custom_name}")
-        
-        # The custom filename should contain the custom format elements
-        self.assertIn("ARTERIELLE", custom_name, "Custom format not applied - missing series description")
-        self.assertIn("20061012", custom_name, "Custom format not applied - missing study date")
+
+        # The custom filename should contain values from MR2_J2KI.dcm tags
+        self.assertIn("SHOULDER", custom_name, "Custom format not applied - missing study description")
+        self.assertIn("20040826", custom_name, "Custom format not applied - missing study date")
         
         # They should be different
         self.assertNotEqual(default_name, custom_name, "Default and custom filenames should be different")
@@ -137,22 +137,22 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         args = [
             "-i", str(self.dcm_dir / "sample1"),
             "-o", self.output_dir,
-            "--custom-filename-format", "`0008|103e`-`0008|0020`",
+            "--custom-filename-format", "`0008|1030`-`0008|0020`",
             "--debug",
             "--verbose"
         ]
-        
+
         # This should work without errors
         try:
             console_entry(args)
             output_files = list(Path(self.output_dir).glob("*.nii.gz"))
             self.assertGreater(len(output_files), 0, "No files generated via command line")
-            
-            # Check filename contains expected elements
+
+            # Check filename contains values from MR2_J2KI.dcm
             filename = output_files[0].stem.replace('.nii', '')
             print(f"Command-line generated filename: {filename}")
-            self.assertIn("ARTERIELLE", filename, "Series description not in filename")
-            self.assertIn("20061012", filename, "Study date not in filename")
+            self.assertIn("SHOULDER", filename, "Study description not in filename")
+            self.assertIn("20040826", filename, "Study date not in filename")
             
         except SystemExit as e:
             # console_entry might call sys.exit, which is normal

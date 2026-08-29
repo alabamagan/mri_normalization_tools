@@ -20,9 +20,12 @@ class TestGeomMaskCrop(unittest.TestCase):
         """Set up test data."""
         self.logger = MNTSLogger['test']
         MNTSLogger.set_global_log_level('debug')
-
-    def tearDown(self):
-        self.logger.cleanup()
+        self._patchers = [
+            mock.patch.object(RemoveShoulder, '_image_spacing', (1, 1, 1), create=True),
+            mock.patch.object(RemoveShoulder, '_is_reversed', False, create=True),
+        ]
+        for p in self._patchers:
+            p.start()
 
         # Create a simple 3D test image (10x10x10)
         self.test_image = sitk.Image([10, 10, 10], sitk.sitkFloat32)
@@ -31,6 +34,11 @@ class TestGeomMaskCrop(unittest.TestCase):
 
         # Fill with ones
         self.test_image = sitk.Add(self.test_image, 1.0)
+
+    def tearDown(self):
+        for p in self._patchers:
+            p.stop()
+        self.logger.cleanup()
 
     def test_barrier_zero(self):
         """Test barrier functionality with barrier=0 (no barrier)."""
@@ -59,12 +67,10 @@ class TestGeomMaskCrop(unittest.TestCase):
 
         # Calculate slice areas
         temp_filter = RemoveShoulder()
-        temp_filter._image_spacing = (1, 1, 1) # this should be extracted when calling .filter(image, seg)
         slice_areas = temp_filter._calculate_slice_areas(mask_array)
 
         # Test with barrier=3 (count backwards 3 slices from end, so consider indices 0-6)
         filter_obj = RemoveShoulder(barrier=3, min_area_threshold=0.0)
-        filter_obj._image_spacing = (1, 1, 1)  # this should be extracted when calling .filter(image, seg)
         min_slice = filter_obj._find_minimum_area_slice(slice_areas)
 
         self.assertEqual(min_slice, 4)

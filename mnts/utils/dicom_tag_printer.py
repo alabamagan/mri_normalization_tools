@@ -1176,8 +1176,8 @@ class DicomTagPrinter:
         else:
             index_cols = ['FilePath']
 
-        # Build columns
-        tag_cols = [t for t in tags if t not in index_cols]
+        # Build columns; deduplicate while preserving order
+        tag_cols = list(dict.fromkeys(t for t in tags if t not in index_cols))
         all_cols = index_cols + tag_cols
 
         rows = [{col: result.get(col, 'N/A') for col in all_cols} for result in results]
@@ -1403,7 +1403,7 @@ class DicomTagPrinter:
 
         if not json_files:
             self.logger.warning("No JSON files found")
-            return None
+            return self.build_dataframe([], list(tags) if tags else [], group_by_series=False)
 
         self.logger.info(f"Found {len(json_files)} JSON file(s)")
 

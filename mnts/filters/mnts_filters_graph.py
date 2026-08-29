@@ -688,8 +688,11 @@ class MNTSFilterGraph(object):
             trained_node = self._node_search('filter', n) if isinstance(n, MNTSFilter) else n
             trained_node_filter = self.nodes[n]['filter']
             trained_node_name = f"{n}_" + trained_node_filter.get_name()
-            if not save_dir.joinpath(trained_node_name).is_dir():
-                # Try to find the state by node name
+            # Glob for files only: the same prefix is used for training-input directories,
+            # so matching directories would be a false positive.
+            _state_files = [p for p in save_dir.glob(f"{trained_node_name}*") if p.is_file()]
+            if not _state_files:
+                # Try to find the state by node name (backward-compat with pre-index saves)
                 self._logger.warning("Cannot find trained state with correct number. Searching node name.")
                 trained_node_name = trained_node_filter.get_name()
             # check if the target node is trainable

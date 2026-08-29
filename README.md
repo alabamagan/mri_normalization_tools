@@ -300,4 +300,21 @@ MIT License
 
 ### Unit test data
 
-This dataset is made available under the Public Domain Dedication and License v1.0, whose full text can be found at [http://www.opendatacommons.org/licenses/pddl/1.0/](http://www.opendatacommons.org/licenses/pddl/1.0/). We hope that all users will follow the ODC Attribution/Share-Alike Community Norms ([http://www.opendatacommons.org/norms/odc-by-sa/](http://www.opendatacommons.org/norms/odc-by-sa/)); in particular, while not legally required, we hope that all users of the data will acknowledge the OpenfMRI project and NSF Grant OCI-1131441 (R. Poldrack, PI) in any publications.
+This dataset is made available under the Public Domain Dedication and License v1.0, whose full text can be found at 
+[http://www.opendatacommons.org/licenses/pddl/1.0/](http://www.opendatacommons.org/licenses/pddl/1.0/). We hope that all users will follow the ODC 
+Attribution/Share-Alike Community Norms ([http://www.opendatacommons.org/norms/odc-by-sa/](http://www.opendatacommons.org/norms/odc-by-sa/)); in particular, while 
+not legally required, we hope that all users of the data will acknowledge the OpenfMRI project and NSF Grant OCI-1131441
+(R. Poldrack, PI) in any publications.
+
+To acquire the dataset, run `cd uni_test; python download_sample_data.py`. This will download both the dataset for 
+unittest and the dataset for examples from openneuro.
+
+#### NIfTI sample
+
+The NIfTI sample file (`unit_test/sample_data/nifti/example4d.nii.gz`) is taken from the [nibabel](https://github.com/nipy/nibabel) test suite and is distributed under the MIT License.
+
+#### DICOM sample
+
+The DICOM sample series (`unit_test/sample_data/sample1/`) is derived from `MR2_J2KI.dcm`, part of the [pydicom-data](https://github.com/pydicom/pydicom-data) repository and distributed under the MIT License.
+
+Run `python unit_test/download_sample_data.py` to download all sample data before executing the unit tests.

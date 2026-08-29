@@ -217,6 +217,14 @@ Important Notes:
     """)
 
 
+def main():
+    print_usage_help()
+    example_basic_usage()
+    example_advanced_usage()
+    example_single_file()
+    example_custom_tags()
+
+
 if __name__ == '__main__':
     # Set up logging
     with MNTSLogger('./dicom_tag_printing_example.log', 
