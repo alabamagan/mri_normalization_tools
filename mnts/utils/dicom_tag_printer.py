@@ -1,0 +1,1532 @@
+#!/usr/bin/env python3
+"""
+DICOM Tag Printer Utility
+
+This script reads DICOM files or directories and prints specific DICOM tag information
+for all sequences. Supports single files, recursive directory search, and batch processing
+of multiple tags.
+
+Author: MRI Normalization Tools
+"""
+
+import os
+import re
+import json
+import itertools
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from pathlib import Path
+from typing import List, Dict, Union, Optional, Any
+from collections import defaultdict
+from rich.console import Console
+from rich.table import Table
+from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
+try:
+    import click
+    CLICK_AVAILABLE = True
+except ImportError:
+    CLICK_AVAILABLE = False
+
+try:
+    import pydicom
+    from pydicom.tag import Tag as DicomTag
+    from pydicom.datadict import dictionary_description
+    PYDICOM_AVAILABLE = True
+except ImportError:
+    PYDICOM_AVAILABLE = False
+
+try:
+    import SimpleITK as sitk
+    SITK_AVAILABLE = True
+except ImportError:
+    SITK_AVAILABLE = False
+
+from ..mnts_logger import MNTSLogger
+from ..io.data_formatting import pydicom_read_series
+
+__all__ = ['DicomTagPrinter', 'print_dicom_tags', 'validate_tag_format', 'print_dicom_tags_from_json']
+
+
+def _fmt_number(n: float) -> str:
+    """Format a number, dropping the decimal point for integer-valued floats."""
+    return str(int(n)) if n == int(n) else str(n)
+
+
+def _search_functional_groups_pydicom(ds, tag) -> Optional[str]:
+    """Search for *tag* inside Shared/PerFrame Functional Groups Sequences.
+
+    Used for multi-frame Enhanced DICOM (e.g. DIXON, enhanced MR) where
+    per-slice metadata lives in nested sequences rather than at the top level.
+
+    Search order:
+
+    1. ``SharedFunctionalGroupsSequence`` (0x5200, 0x9229) — metadata shared
+       by all frames.
+    2. First item of ``PerFrameFunctionalGroupsSequence`` (0x5200, 0x9230) —
+       metadata for the first individual frame.
+
+    Args:
+        ds: A :class:`pydicom.Dataset` already loaded from the file.
+        tag: A :class:`pydicom.tag.Tag` to look for.
+
+    Returns:
+        Stripped string value if found, ``None`` otherwise.
+    """
+    def _search_item(item) -> Optional[str]:
+        """Recursively search a sequence Dataset item for *tag*."""
+        for elem in item:
+            if elem.tag == tag:
+                return str(elem.value).strip()
+            if elem.VR == 'SQ' and elem.value:
+                for sub_item in elem.value:
+                    found = _search_item(sub_item)
+                    if found is not None:
+                        return found
+        return None
+
+    # 1. Shared Functional Groups (same for all frames)
+    shared_seq = getattr(ds, 'SharedFunctionalGroupsSequence', None)
+    if shared_seq:
+        for item in shared_seq:
+            val = _search_item(item)
+            if val is not None:
+                return val
+
+    # 2. Per-Frame Functional Groups — inspect only the first frame
+    per_frame_seq = getattr(ds, 'PerFrameFunctionalGroupsSequence', None)
+    if per_frame_seq:
+        val = _search_item(per_frame_seq[0])
+        if val is not None:
+            return val
+
+    return None
+
+
+# Rich table column styles keyed by DataFrame column name.
+# Columns not listed here get the default tag style.
+_COL_STYLES = {
+    'SubjectID':          dict(style="magenta", no_wrap=True),
+    'SeriesUID':          dict(style="cyan", no_wrap=False, max_width=30),
+    'FileCount':          dict(style="green", justify="right"),
+    'RepresentativeFile': dict(style="blue", no_wrap=False, max_width=40),
+    'FilePath':           dict(style="cyan", no_wrap=False, max_width=50),
+}
+_DEFAULT_TAG_STYLE = dict(style="yellow", no_wrap=False)
+
+
+# ------------------------------------------------------------------
+# Module-level worker functions for ProcessPoolExecutor
+# (Instance methods are not picklable, so multiprocessing needs these)
+# ------------------------------------------------------------------
+
+def _is_dicom_file_worker(file_path: Path, backend: str) -> bool:
+    """Return ``True`` if *file_path* is a readable DICOM file.
+
+    Designed to run in a child process — imports are done locally so the
+    worker is self-contained and picklable.
+    """
+    try:
+        if file_path.suffix.lower() in ['.dcm', '.dicom']:
+            return True
+
+        if backend == 'pydicom':
+            try:
+                import pydicom as _pd
+                _pd.dcmread(file_path, stop_before_pixels=True)
+                return True
+            except Exception:
+                return False
+        elif backend == 'sitk':
+            try:
+                import SimpleITK as _sitk
+                reader = _sitk.ImageFileReader()
+                reader.SetFileName(str(file_path))
+                reader.ReadImageInformation()
+                return True
+            except Exception:
+                return False
+    except Exception:
+        pass
+    return False
+
+
+def _read_dicom_tags_worker(file_path: Path, tags: List[str],
+                            backend: str) -> Dict[str, str]:
+    """Read DICOM tags from a single file.
+
+    Standalone version of :pymeth:`DicomTagPrinter.read_dicom_tags` that can
+    run in a child process.
+    """
+    if backend == 'pydicom':
+        try:
+            import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
+            ds = _pd.dcmread(file_path, stop_before_pixels=True, force=True)
+
+            # Detect multi-frame DICOM (e.g. DIXON, Enhanced MR): all slices
+            # are embedded in a single file with NumberOfFrames (0028,0008) > 1.
+            num_frames = 1
+            _nf = getattr(ds, 'NumberOfFrames', None)
+            if _nf is not None:
+                try:
+                    num_frames = int(str(_nf))
+                except (ValueError, TypeError):
+                    pass
+            is_multiframe = num_frames > 1
+
+            result = {}
+            for tag_str in tags:
+                try:
+                    group, element = tag_str.split('|')
+                    tag = _Tag(int(group, 16), int(element, 16))
+                    if tag in ds:
+                        result[tag_str] = str(ds[tag].value).strip()
+                    elif is_multiframe:
+                        # Fallback: tag may live in Shared/PerFrame Functional
+                        # Groups rather than at the top level.
+                        fg_val = _search_functional_groups_pydicom(ds, tag)
+                        result[tag_str] = fg_val if fg_val is not None else 'Missing'
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception:
+                    result[tag_str] = 'Error'
+
+            # Carry frame count so callers can override FileCount
+            if is_multiframe:
+                result['__num_frames__'] = str(num_frames)
+            return result
+        except Exception:
+            return {tag: 'Error' for tag in tags}
+    else:
+        try:
+            import SimpleITK as _sitk
+            reader = _sitk.ImageFileReader()
+            reader.SetFileName(str(file_path))
+            reader.LoadPrivateTagsOn()
+            reader.ReadImageInformation()
+            result = {}
+            for tag_str in tags:
+                try:
+                    if reader.HasMetaDataKey(tag_str):
+                        result[tag_str] = reader.GetMetaData(tag_str).strip()
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception:
+                    result[tag_str] = 'Error'
+            return result
+        except Exception:
+            return {tag: 'Error' for tag in tags}
+
+
+def _aggregate_series_tags_worker(files: List[Path], tags: List[str],
+                                  backend: str) -> Dict[str, str]:
+    """Aggregate tag values across all files in a single series.
+
+    Standalone version of :pymeth:`DicomTagPrinter._aggregate_series_tags`
+    that can run in a child process.
+    """
+    all_values: Dict[str, List[str]] = defaultdict(list)
+    for file_path in files:
+        tag_values = _read_dicom_tags_worker(file_path, tags, backend)
+        for tag, value in tag_values.items():
+            all_values[tag].append(value)
+
+    result: Dict[str, str] = {}
+    for tag in tags:
+        values = all_values.get(tag, [])
+        valid = [v for v in values if v not in ('Missing', 'Error')]
+        if not valid:
+            result[tag] = values[0] if values else 'Missing'
+            continue
+        if all(v == valid[0] for v in valid[1:]):
+            result[tag] = valid[0]
+            continue
+        try:
+            numbers = [float(v) for v in valid]
+            result[tag] = f"{_fmt_number(min(numbers))}~{_fmt_number(max(numbers))}"
+        except (ValueError, TypeError):
+            result[tag] = valid[0]
+
+    # Propagate __num_frames__ sentinel so the caller can set FileCount correctly
+    # for multi-frame series (e.g. DIXON where every file holds all frames).
+    if '__num_frames__' in all_values:
+        frame_counts = all_values['__num_frames__']
+        try:
+            result['__num_frames__'] = str(sum(int(n) for n in frame_counts))
+        except (ValueError, TypeError):
+            result['__num_frames__'] = frame_counts[0]
+    return result
+
+
+def _read_directory_series_worker(directory: Path, backend: str) -> Dict[str, List[Path]]:
+    """Group all DICOM files in a single directory by SeriesInstanceUID.
+
+    Reads only the SeriesInstanceUID tag (0x0020, 0x000e) for speed via
+    pydicom's ``specific_tags`` optimisation.  Non-DICOM files are silently
+    skipped.  Only the immediate contents of *directory* are examined — no
+    recursion.
+
+    Args:
+        directory: Directory to scan.
+        backend: ``'pydicom'`` or ``'sitk'``.
+
+    Returns:
+        Dict mapping each SeriesInstanceUID to the list of files in that
+        directory belonging to that series.
+    """
+    from collections import defaultdict
+    
+    if backend == 'pydicom':
+        try:
+            import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
+            from pathlib import Path
+            import os
+            
+            series_groups = defaultdict(list)
+            
+            # Non-recursive: only files directly inside the directory
+            try:
+                files = [Path(directory) / f for f in os.listdir(directory)
+                        if (Path(directory) / f).is_file()]
+            except (OSError, PermissionError):
+                return {}
+            
+            for file_path in files:
+                try:
+                    # Read only SeriesInstanceUID for speed
+                    ds = _pd.dcmread(file_path,
+                                    specific_tags=[_Tag(0x0020, 0x000e)],
+                                    stop_before_pixels=True)
+                    series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
+                    series_groups[series_uid].append(file_path)
+                except Exception:
+                    # Not a DICOM file; skip
+                    pass
+            
+            return dict(series_groups)
+        except Exception:
+            return {}
+    else:
+        # SimpleITK backend
+        try:
+            import SimpleITK as _sitk
+            from pathlib import Path
+            import os
+            
+            series_groups = defaultdict(list)
+            try:
+                files = [Path(directory) / f for f in os.listdir(directory)
+                        if (Path(directory) / f).is_file()]
+            except (OSError, PermissionError):
+                return {}
+            
+            for file_path in files:
+                try:
+                    reader = _sitk.ImageFileReader()
+                    reader.SetFileName(str(file_path))
+                    reader.ReadImageInformation()
+                    series_uid = (reader.GetMetaData('0020|000e')
+                                if reader.HasMetaDataKey('0020|000e')
+                                else 'Unknown')
+                    series_groups[series_uid].append(file_path)
+                except Exception:
+                    pass
+            
+            return dict(series_groups)
+        except Exception:
+            return {}
+
+
+def _read_series_uid_worker(file_path: Path, backend: str) -> tuple:
+    """Read the SeriesInstanceUID from a single DICOM file.
+
+    Used as the per-file fallback when directory-level parallelisation is not
+    applicable.
+
+    Args:
+        file_path: Path to the DICOM file.
+        backend: ``'pydicom'`` or ``'sitk'``.
+
+    Returns:
+        ``(file_path, series_uid)`` tuple.  *series_uid* is ``'Unknown'`` if
+        the tag cannot be read.
+    """
+    try:
+        if backend == 'pydicom':
+            import pydicom as _pd
+            from pydicom.tag import Tag as _Tag
+            # Read only SeriesInstanceUID for speed
+            ds = _pd.dcmread(file_path,
+                           specific_tags=[_Tag(0x0020, 0x000e)],
+                           stop_before_pixels=True)
+            series_uid = getattr(ds, 'SeriesInstanceUID', 'Unknown')
+        else:
+            import SimpleITK as _sitk
+            reader = _sitk.ImageFileReader()
+            reader.SetFileName(str(file_path))
+            reader.ReadImageInformation()
+            series_uid = reader.GetMetaData('0020|000e') if reader.HasMetaDataKey('0020|000e') else 'Unknown'
+        return (file_path, series_uid)
+    except Exception:
+        return (file_path, 'Unknown')
+
+
+def _read_json_tags_worker(file_path: Path, tags: Optional[List[str]]) -> Dict[str, Any]:
+    """Read DICOM tags from a single JSON file.
+
+    Args:
+        file_path: Path to the JSON file.
+        tags: Tags to extract.  ``None`` means extract all tags present in the
+            file.
+
+    Returns:
+        Dict containing ``'FilePath'`` and one key per tag value.  An
+        ``'__error__'`` key is added when the file cannot be read.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, dict):
+            return {'FilePath': str(file_path), '__error__': True}
+        
+        data = {k: str(v).strip() for k, v in data.items()}
+        
+        if not tags:
+            return {'FilePath': str(file_path), **data}
+        
+        tag_values = {t: data.get(t, 'Missing') for t in tags}
+        return {'FilePath': str(file_path), **tag_values}
+    except Exception:
+        return {'FilePath': str(file_path), '__error__': True}
+
+
+def _process_directory_complete_worker(directory: Path, tags: List[str], backend: str,
+                                       summarize_numeric: bool) -> List[Dict[str, Any]]:
+    """Fully process a single directory: discover DICOM files, group by series, read tags.
+
+    Executes the complete per-directory pipeline:
+
+    1. Scan all DICOM files under *directory* (recursive).
+    2. Group files by SeriesInstanceUID.
+    3. Read the requested tags for each series.
+
+    Args:
+        directory: Directory to process.
+        tags: DICOM tags to read.
+        backend: ``'pydicom'`` or ``'sitk'``.
+        summarize_numeric: When ``True``, aggregate numeric tags across all
+            files in each series as ``"min~max"`` ranges.
+
+    Returns:
+        List of result dicts, one per series.
+    """
+    results = []
+    
+    try:
+        # Step 1: Discover all DICOM files under the directory
+        dicom_files = []
+        for file_path in directory.rglob('*'):
+            if not file_path.is_file():
+                continue
+            if _is_dicom_file_worker(file_path, backend):
+                dicom_files.append(file_path)
+        
+        if not dicom_files:
+            return results
+        
+        # Step 2: Group by SeriesInstanceUID
+        series_groups = {}
+        for file_path in dicom_files:
+            _, series_uid = _read_series_uid_worker(file_path, backend)
+            if series_uid and series_uid != 'Unknown':
+                series_groups.setdefault(series_uid, []).append(file_path)
+        
+        # Step 3: Read tags for each series
+        for series_uid, files in series_groups.items():
+            if summarize_numeric and len(files) > 1:
+                tag_values = _aggregate_series_tags_worker(files, tags, backend)
+            else:
+                tag_values = _read_dicom_tags_worker(files[0], tags, backend)
+
+            # Build result
+            result = {
+                'SeriesUID': series_uid,
+                'FileCount': len(files),
+                'RepresentativeFile': str(files[0]),
+                **tag_values
+            }
+            results.append(result)
+    
+    except Exception:
+        pass
+    
+    return results
+
+
+class DicomTagPrinter:
+    """DICOM Tag Printer Class
+
+    This class provides functionality to read DICOM files and print specific tags.
+    Supports both pydicom and SimpleITK as backend engines.
+
+    Args:
+        backend (str):
+            Backend engine to use, 'pydicom' or 'sitk' or 'auto'
+        logger (MNTSLogger):
+            Logger instance for logging information
+        verbose (bool, optional):
+            Put logger in debug level if true
+    """
+
+    def __init__(self, backend: str = 'auto', logger=None, verbose=False):
+        self.logger = logger or MNTSLogger['DicomTagPrinter']
+        if verbose:
+            MNTSLogger.set_global_log_level('debug')
+            self.logger.debug("Confirm log level set to debug.")
+
+        if backend == 'auto':
+            if PYDICOM_AVAILABLE:
+                self.backend = 'pydicom'
+            elif SITK_AVAILABLE:
+                self.backend = 'sitk'
+            else:
+                raise ImportError("Either pydicom or SimpleITK must be installed")
+        elif backend == 'pydicom':
+            if not PYDICOM_AVAILABLE:
+                raise ImportError("pydicom is not installed")
+            self.backend = 'pydicom'
+        elif backend == 'sitk':
+            if not SITK_AVAILABLE:
+                raise ImportError("SimpleITK is not installed")
+            self.backend = 'sitk'
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
+
+        self.logger.info(f"Using backend: {self.backend}")
+
+    # ------------------------------------------------------------------
+    # Tag reading
+    # ------------------------------------------------------------------
+
+    def read_dicom_tag_pydicom(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
+        """Read DICOM tags using pydicom.
+
+        Args:
+            file_path: DICOM file path
+            tags: List of tags to read, format: ['0008|103e', '0010|0020']
+
+        Returns:
+            Dictionary mapping raw tag strings to their values.
+        """
+        try:
+            ds = pydicom.dcmread(file_path, stop_before_pixels=True, force=True)
+
+            # Detect multi-frame DICOM (e.g. DIXON, Enhanced MR)
+            num_frames = 1
+            _nf = getattr(ds, 'NumberOfFrames', None)
+            if _nf is not None:
+                try:
+                    num_frames = int(str(_nf))
+                except (ValueError, TypeError):
+                    pass
+            is_multiframe = num_frames > 1
+
+            result = {}
+            for tag_str in tags:
+                try:
+                    group, element = tag_str.split('|')
+                    tag = DicomTag(int(group, 16), int(element, 16))
+                    if tag in ds:
+                        result[tag_str] = str(ds[tag].value).strip()
+                    elif is_multiframe:
+                        # Fallback: tag may live in Shared/PerFrame Functional
+                        # Groups rather than at the top level.
+                        fg_val = _search_functional_groups_pydicom(ds, tag)
+                        result[tag_str] = fg_val if fg_val is not None else 'Missing'
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception as e:
+                    self.logger.warning(f"Cannot read tag {tag_str}: {e}")
+                    result[tag_str] = 'Error'
+
+            if is_multiframe:
+                result['__num_frames__'] = str(num_frames)
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Cannot read DICOM file {file_path}: {e}")
+            return {tag: 'Error' for tag in tags}
+
+    def read_dicom_tag_sitk(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
+        """Read DICOM tags using SimpleITK.
+
+        Args:
+            file_path: DICOM file path
+            tags: List of tags to read, format: ['0008|103e', '0010|0020']
+
+        Returns:
+            Dictionary mapping raw tag strings to their values.
+        """
+        try:
+            reader = sitk.ImageFileReader()
+            reader.SetFileName(str(file_path))
+            reader.LoadPrivateTagsOn()
+            reader.ReadImageInformation()
+
+            result = {}
+            for tag_str in tags:
+                try:
+                    if reader.HasMetaDataKey(tag_str):
+                        result[tag_str] = reader.GetMetaData(tag_str).strip()
+                    else:
+                        result[tag_str] = 'Missing'
+                except Exception as e:
+                    self.logger.warning(f"Cannot read tag {tag_str}: {e}")
+                    result[tag_str] = 'Error'
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Cannot read DICOM file {file_path}: {e}")
+            return {tag: 'Error' for tag in tags}
+
+    def read_dicom_tags(self, file_path: Union[str, Path], tags: List[str]) -> Dict[str, str]:
+        """Read DICOM tags (unified interface).
+
+        Args:
+            file_path: DICOM file path
+            tags: List of tags to read
+
+        Returns:
+            Dictionary mapping raw tag strings to their values.
+        """
+        if self.backend == 'pydicom':
+            return self.read_dicom_tag_pydicom(file_path, tags)
+        else:
+            return self.read_dicom_tag_sitk(file_path, tags)
+
+    def get_tag_name(self, tag: Union[str, Any]) -> str:
+        r"""For use with JSON source"""
+        if not PYDICOM_AVAILABLE:
+            # Fall back when pydicom is not available
+            return tag
+
+        try:
+            if isinstance(tag, str):
+                group, elem = tag.split("|")
+                tag = (int(group, 16) << 16) | int(elem, 16)
+            elif isinstance(tag, DicomTag):
+                tag = int(tag)
+            elif isinstance(tag, tuple):
+                tag = (tag[0] << 16) | tag[1]
+            return dictionary_description(tag)
+        except (KeyError, ValueError):
+            # Return if anything happens
+            return tag
+    # ------------------------------------------------------------------
+    # File discovery
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _list_candidate_files(input_path: Path, glob_pattern: str,
+                              recursive: bool,
+                              max_workers: Optional[int] = None) -> List[Path]:
+        """Collect all candidate file paths from *input_path* into a list.
+
+        Runs as a distinct phase before any DICOM checking so callers know the
+        total file count upfront (needed for a determinate progress bar) and
+        can show per-directory feedback while scanning.
+
+        Uses :func:`os.scandir` for efficient traversal and fans out top-level
+        subdirectories across a :class:`~concurrent.futures.ThreadPoolExecutor`
+        so multiple subtrees are scanned in parallel.
+
+        Args:
+            input_path: File or directory to search.
+            glob_pattern: Glob-style filter (``'*'`` = all files,
+                ``'*.<ext>'`` = files with that extension).
+            recursive: Whether to descend into subdirectories.
+            max_workers: Thread-pool size.  ``None`` lets Python choose.
+
+        Returns:
+            List of candidate file paths (unsorted).
+        """
+        if input_path.is_file():
+            return [input_path]
+        if not input_path.is_dir():
+            return []
+
+        suffix_filter = ('.' + glob_pattern.rsplit('.', 1)[-1]).lower() if '.' in glob_pattern else ''
+
+        def _scan_tree(root: Path) -> List[Path]:
+            local: List[Path] = []
+            stack = [root]
+            while stack:
+                d = stack.pop()
+                try:
+                    with os.scandir(d) as it:
+                        for entry in it:
+                            if entry.is_file(follow_symlinks=False):
+                                if not suffix_filter or entry.name.lower().endswith(suffix_filter):
+                                    local.append(Path(entry.path))
+                            elif recursive and entry.is_dir(follow_symlinks=False):
+                                stack.append(Path(entry.path))
+                except (OSError, PermissionError):
+                    pass
+            return local
+
+        all_files: List[Path] = []
+        subdirs: List[Path] = []
+        try:
+            with os.scandir(input_path) as it:
+                for entry in it:
+                    if entry.is_file(follow_symlinks=False):
+                        if not suffix_filter or entry.name.lower().endswith(suffix_filter):
+                            all_files.append(Path(entry.path))
+                    elif recursive and entry.is_dir(follow_symlinks=False):
+                        subdirs.append(Path(entry.path))
+        except (OSError, PermissionError):
+            return all_files
+
+        if not subdirs:
+            return all_files
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+            console=MNTSLogger.global_console,
+        ) as progress:
+            progress.add_task("Scanning directories ...", total=None)
+            pool = ThreadPoolExecutor(max_workers=max_workers)
+            try:
+                n_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+                window = n_workers * 4
+                pending: dict = {}
+                iterator = iter(subdirs)
+
+                for d in itertools.islice(iterator, window):
+                    pending[pool.submit(_scan_tree, d)] = d
+
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        d = pending.pop(f)
+                        progress.console.print(f"  {d}")
+                        all_files.extend(f.result())
+                        next_d = next(iterator, None)
+                        if next_d is not None:
+                            pending[pool.submit(_scan_tree, next_d)] = next_d
+            finally:
+                pool.shutdown(wait=False)
+
+        return all_files
+    
+    def find_dicom_directories(self, input_path: Union[str, Path],
+                              recursive: bool = True,
+                              max_workers: Optional[int] = None) -> List[Path]:
+        """Find all directories that contain at least one DICOM file.
+
+        Delegates DICOM validation to :meth:`find_dicom_files`, which runs
+        validation in parallel, then collects unique parent directories.
+
+        Args:
+            input_path: File or directory to search.
+            recursive: Whether to descend into subdirectories.
+            max_workers: Worker count passed through to :meth:`find_dicom_files`.
+
+        Returns:
+            Sorted list of directory paths that contain DICOM files.
+        """
+        input_path = Path(input_path)
+
+        if input_path.is_file():
+            return [input_path.parent] if self.is_dicom_file(input_path) else []
+
+        dicom_files = self.find_dicom_files(input_path, recursive, max_workers)
+        return sorted({f.parent for f in dicom_files})
+
+    def find_dicom_files(self, input_path: Union[str, Path],
+                         recursive: bool = True,
+                         max_workers: Optional[int] = None) -> List[Path]:
+        """Find DICOM files, using multi-process ``is_dicom_file`` checks.
+
+        The discovery runs in two phases:
+
+        1. **Enumerate** candidate paths via :py:meth:`Path.rglob` (fast, I/O
+           only).
+        2. **Filter** candidates through :func:`_is_dicom_file_worker` in
+           parallel using a :class:`~concurrent.futures.ProcessPoolExecutor`,
+           bypassing the GIL for true parallelism.
+
+        A Rich progress bar is displayed during the filtering phase.
+
+        Args:
+            input_path: Input path (file or directory).
+            recursive: Whether to search recursively.
+            max_workers: Process-pool size (``None`` = CPU count).
+
+        Returns:
+            Sorted list of DICOM file paths.
+        """
+        input_path = Path(input_path)
+
+        # Phase 1: collect all candidate paths (shows directory scanning
+        # progress, gives us the total for a determinate progress bar).
+        candidates = self._list_candidate_files(input_path, '*', recursive,
+                                                max_workers=max_workers)
+        if not candidates:
+            return []
+
+        self.logger.debug(f"Found {len(candidates)} candidate files, "
+                          f"checking for DICOM …")
+
+        found: List[Path] = []
+        backend = self.backend
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+            console=MNTSLogger.global_console,
+        ) as progress:
+            task = progress.add_task("Scanning for DICOM files …",
+                                     total=len(candidates))
+
+            pool = ThreadPoolExecutor(max_workers=max_workers)
+            try:
+                n_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+                window = n_workers * 4
+                pending: dict = {}
+                iterator = iter(candidates)
+
+                for fp in itertools.islice(iterator, window):
+                    f = pool.submit(_is_dicom_file_worker, fp, backend)
+                    pending[f] = fp
+
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                   timeout=30.0)
+                    if not done:
+                        # A worker thread is hung (e.g. pydicom stuck on a
+                        # malformed file).  Skip the stuck files and move on;
+                        # shutdown(wait=False) below avoids blocking on them.
+                        for f in list(pending):
+                            fp = pending.pop(f)
+                            self.logger.warning(
+                                f"DICOM check timed out, skipping: {fp}")
+                            progress.advance(task)
+                        break
+                    for f in done:
+                        fp = pending.pop(f)
+                        try:
+                            if f.result():
+                                found.append(fp)
+                        except Exception:
+                            self.logger.debug(f"is_dicom_file raised for {fp}")
+                        progress.advance(task)
+                        next_fp = next(iterator, None)
+                        if next_fp is not None:
+                            nf = pool.submit(_is_dicom_file_worker, next_fp, backend)
+                            pending[nf] = next_fp
+            finally:
+                pool.shutdown(wait=False)
+
+        return sorted(found)
+
+    def is_dicom_file(self, file_path: Path) -> bool:
+        """Check if file is DICOM format.
+
+        Args:
+            file_path: File path
+
+        Returns:
+            Whether file is DICOM
+        """
+        try:
+            if file_path.suffix.lower() in ['.dcm', '.dicom']:
+                return True
+
+            if self.backend == 'pydicom' and PYDICOM_AVAILABLE:
+                try:
+                    pydicom.dcmread(file_path, stop_before_pixels=True)
+                    return True
+                except Exception:
+                    return False
+            elif self.backend == 'sitk' and SITK_AVAILABLE:
+                try:
+                    reader = sitk.ImageFileReader()
+                    reader.SetFileName(str(file_path))
+                    reader.ReadImageInformation()
+                    return True
+                except Exception:
+                    return False
+        except Exception:
+            pass
+
+        return False
+
+    def find_json_files(self, input_path: Union[str, Path],
+                        recursive: bool = True) -> List[Path]:
+        """Find ``.json`` files in a directory.
+
+        Args:
+            input_path: Input path (file or directory).
+            recursive: Whether to search recursively.
+
+        Returns:
+            Sorted list of ``.json`` file paths.
+        """
+        input_path = Path(input_path)
+        candidates = self._list_candidate_files(input_path, '*.json', recursive)
+        return sorted(fp for fp in candidates if fp.suffix.lower() == '.json')
+
+    # ------------------------------------------------------------------
+    # Grouping & aggregation
+    # ------------------------------------------------------------------
+
+    def group_by_series(self, dicom_files: List[Path],
+                       max_workers: Optional[int] = None) -> Dict[str, List[Path]]:
+        """Group DICOM files by series with intelligent parallelization.
+        
+        Uses directory-level parallelization when there are enough directories,
+        otherwise falls back to file-level parallelization.
+
+        Args:
+            dicom_files: List of DICOM files
+            max_workers: Maximum number of worker processes (None = CPU count)
+
+        Returns:
+            Dictionary of file groups keyed by series UID
+        """
+        # Fast path: try pydicom_read_series first
+        if self.backend == 'pydicom' and PYDICOM_AVAILABLE:
+            try:
+                if dicom_files:
+                    common_dir = Path(os.path.commonpath([str(f.parent) for f in dicom_files]))
+                    series_dict = pydicom_read_series(common_dir, progress_bar=False)
+
+                    filtered_dict = {}
+                    file_set = set(dicom_files)
+                    for series_uid, files in series_dict.items():
+                        filtered_files = [f for f in files if f in file_set]
+                        if filtered_files:
+                            filtered_dict[series_uid] = filtered_files
+
+                    return filtered_dict
+            except Exception as e:
+                self.logger.warning(f"Failed to use pydicom_read_series. Maybe it's a DicomDir object: {e}")
+
+        # Group files by directory
+        files_by_dir = defaultdict(list)
+        for file_path in dicom_files:
+            files_by_dir[file_path.parent].append(file_path)
+        
+        directories = list(files_by_dir.keys())
+        num_dirs = len(directories)
+        num_workers = max_workers or os.cpu_count() or 4
+        
+        # Decide: directory-level vs file-level parallelization
+        if num_dirs >= num_workers:
+            # Directory-level parallelization (preferred)
+            self.logger.debug(f"Using directory-level parallelization ({num_dirs} directories)")
+            return self._group_by_series_directory_parallel(files_by_dir, directories, max_workers)
+        else:
+            # File-level parallelization (fallback)
+            self.logger.debug(f"Using file-level parallelization ({len(dicom_files)} files in {num_dirs} directories)")
+            return self._group_by_series_file_parallel(dicom_files, max_workers)
+    
+    def _group_by_series_directory_parallel(self, files_by_dir: Dict[Path, List[Path]],
+                                           directories: List[Path],
+                                           max_workers: Optional[int]) -> Dict[str, List[Path]]:
+        """Parallel grouping at directory level."""
+        backend = self.backend
+        all_series_groups = defaultdict(list)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Grouping by series (directory-level)...",
+                                    total=len(directories))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_directory_series_worker, dir_path, backend): dir_path
+                          for dir_path in directories}
+                
+                for future in as_completed(futures):
+                    dir_path = futures[future]
+                    try:
+                        dir_series_groups = future.result()
+                        
+                        # Merge results, only include files we care about
+                        file_set = set(files_by_dir[dir_path])
+                        for series_uid, files in dir_series_groups.items():
+                            filtered_files = [f for f in files if f in file_set]
+                            all_series_groups[series_uid].extend(filtered_files)
+                    except Exception as e:
+                        self.logger.warning(f"Error processing directory {dir_path}: {e}")
+                    finally:
+                        progress.advance(task)
+        
+        return dict(all_series_groups)
+    
+    def _group_by_series_file_parallel(self, dicom_files: List[Path],
+                                      max_workers: Optional[int]) -> Dict[str, List[Path]]:
+        """Parallel grouping at file level (fallback)."""
+        backend = self.backend
+        series_groups = defaultdict(list)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Grouping by series (file-level)...",
+                                    total=len(dicom_files))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_series_uid_worker, fp, backend): fp
+                          for fp in dicom_files}
+                
+                for future in as_completed(futures):
+                    try:
+                        file_path, series_uid = future.result()
+                        series_groups[series_uid].append(file_path)
+                    except Exception as e:
+                        fp = futures[future]
+                        self.logger.warning(f"Error reading series UID from {fp}: {e}")
+                        series_groups['Unknown'].append(fp)
+                    finally:
+                        progress.advance(task)
+        
+        return dict(series_groups)
+
+    def _aggregate_series_tags(self, files: List[Path], tags: List[str]) -> Dict[str, str]:
+        """Read all files in a series and aggregate numeric tag values as ranges.
+
+        For each tag:
+
+        - If all valid values are identical, the single value is shown.
+        - If all valid values are numeric (int or float), the range is shown as
+          ``"min~max"`` (e.g. ``"1~30"``).
+        - Otherwise the representative (first) file's value is used.
+
+        Args:
+            files: All files belonging to a single series.
+            tags: Tags to read.
+
+        Returns:
+            Dict mapping each tag name to its aggregated value string.
+        """
+        all_values: Dict[str, List[str]] = defaultdict(list)
+        for file_path in files:
+            tag_values = self.read_dicom_tags(file_path, tags)
+            for tag, value in tag_values.items():
+                all_values[tag].append(value)
+
+        result: Dict[str, str] = {}
+        for tag in tags:
+            values = all_values.get(tag, [])
+            valid = [v for v in values if v not in ('Missing', 'Error')]
+
+            if not valid:
+                result[tag] = values[0] if values else 'Missing'
+                continue
+
+            # Short-circuit: if all values are the same, no need to build a full set
+            if all(v == valid[0] for v in valid[1:]):
+                result[tag] = valid[0]
+                continue
+
+            try:
+                numbers = [float(v) for v in valid]
+                result[tag] = f"{_fmt_number(min(numbers))}~{_fmt_number(max(numbers))}"
+            except (ValueError, TypeError):
+                result[tag] = valid[0]
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Tag reading helpers
+    # ------------------------------------------------------------------
+
+    def read_json_tags(self, file_path: Union[str, Path], tags: Optional[List[str]] = None) -> Dict[str, str]:
+        """Read DICOM tags from a JSON file containing key-value pairs.
+
+        The JSON file is expected to contain DICOM tags as keys in the format
+        ``"XXXX|XXXX"`` (e.g. ``"0008|103e"``) with their string values.
+
+        Args:
+            file_path: Path to the JSON file
+            tags: List of tags to extract. When ``None`` or empty, all tags in
+                  the file are returned.
+
+        Returns:
+            Dictionary mapping tag keys to their values.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            self.logger.error(f"Cannot read JSON file {file_path}: {e}")
+            return {tag: 'Error' for tag in (tags or [])}
+
+        if not isinstance(data, dict):
+            self.logger.error(f"Expected a JSON object in {file_path}, got {type(data).__name__}")
+            return {tag: 'Error' for tag in (tags or [])}
+
+        data = {k: str(v).strip() for k, v in data.items()}
+
+        if not tags:
+            return data
+
+        return {t: data.get(t, 'Missing') for t in tags}
+
+    # ------------------------------------------------------------------
+    # Subject ID extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _inject_subject_id(results: List[Dict], id_globber: str,
+                           path_key: str) -> None:
+        """Extract a subject ID from each result's file path.
+
+        Mutates *results* in-place, adding a ``'SubjectID'`` key.
+
+        Args:
+            results: Result dicts to mutate.
+            id_globber: Regex pattern whose first capture group (or full match
+                if no groups) is used as the subject ID.
+            path_key: Key in each result dict that holds the file path
+                (``'FilePath'`` or ``'RepresentativeFile'``).
+        """
+        for result in results:
+            path = Path(result.get(path_key, ''))
+            # Search for file name if json mode
+            if path.suffix == '.json':
+                mo = re.search(id_globber, path.name)
+            else: # otherwise assume pydicom is used and glob from ID or parent
+                id_str = result.get('0010|0020', '')
+                parents = list(path.parents)
+                for _s in parents + [id_str]:
+                    _s = _s.name if isinstance(_s, Path) else str(_s)
+                    mo = re.fullmatch(id_globber, _s)
+                    if mo:
+                        break
+            if mo:
+                result['SubjectID'] = mo.group(1) if mo.lastindex else mo.group()
+            else:
+                result['SubjectID'] = 'N/A'
+    # ------------------------------------------------------------------
+    # Unified DataFrame construction
+    # ------------------------------------------------------------------
+
+    def build_dataframe(self, results: List[Dict], tags: List[str],
+                        group_by_series: bool) -> 'pd.DataFrame':
+        """Build a unified DataFrame from tag results.
+
+        This is the single source of truth for column structure and ordering used
+        by all output methods (table, CSV, JSON).
+
+        When a ``'SubjectID'`` key is present in *results* (i.e. an *id_globber*
+        was applied), it replaces the raw path / series UID column as the primary
+        index column.  The column layout becomes:
+
+        - **File view with globber**: ``SubjectID | tag1 | tag2 | …``
+        - **Series view with globber**: ``SubjectID | FileCount | tag1 | …``
+        - **File view (no globber)**: ``FilePath | tag1 | tag2 | …``
+        - **Series view (no globber)**: ``SeriesUID | FileCount | RepresentativeFile | tag1 | …``
+
+        Args:
+            results: List of result dicts.
+            tags: Ordered list of DICOM tag column names.
+            group_by_series: Whether results are grouped by series.
+
+        Returns:
+            :class:`pandas.DataFrame` with index columns first, followed by tag
+            columns.  Missing values are filled with ``'N/A'``.
+        """
+        if not PANDAS_AVAILABLE:
+            raise ImportError("pandas is required for build_dataframe. "
+                              "Install it with: pip install pandas")
+
+        has_subject_id = bool(results) and 'SubjectID' in results[0]
+
+        if has_subject_id:
+            index_cols = ['SubjectID', 'FileCount', 'RepresentativeFile'] if group_by_series else ['SubjectID']
+        elif group_by_series:
+            index_cols = ['SeriesUID', 'FileCount', 'RepresentativeFile']
+        else:
+            index_cols = ['FilePath']
+
+        # Build columns
+        tag_cols = [t for t in tags if t not in index_cols]
+        all_cols = index_cols + tag_cols
+
+        rows = [{col: result.get(col, 'N/A') for col in all_cols} for result in results]
+        df = pd.DataFrame(rows, columns=all_cols)
+        df.columns = [self.get_tag_name(tag) for tag in df.columns]
+        if 'SubjectID' in df.columns: # Sort it roughly
+            df.sort_values("SubjectID", inplace=True)
+        elif 'Series Number' in df.columns:
+            df.cort_values("Series Number")
+        return df
+
+    # ------------------------------------------------------------------
+    # Public entry points
+    # ------------------------------------------------------------------
+
+    def get_dataframe(self, input_path: Union[str, Path], tags: List[str],
+                      recursive: bool = True, group_by_series: bool = True,
+                      output_format: str = 'table',
+                      id_globber: Optional[str] = None,
+                      summarize_numeric: bool = False,
+                      max_workers: Optional[int] = None,
+                      debug: bool = False) -> None:
+        """Print DICOM tag information.
+
+        File discovery and tag reading are both parallelised with a
+        :class:`~concurrent.futures.ProcessPoolExecutor` for true
+        multi-core parallelism (bypasses the GIL).  A Rich progress bar is
+        shown during the reading phase.
+
+        Args:
+            input_path: Input path.
+            tags: List of tags to print.
+            recursive: Whether to search recursively.
+            group_by_series: Whether to group by series.
+            output_format: Output format (``'table'``, ``'csv'``, ``'json'``).
+            id_globber: Optional regex pattern to extract a subject/case ID from
+                each file path.  When supplied, ``SubjectID`` replaces the file
+                path or series UID as the primary index column.
+            summarize_numeric: When ``True`` and *group_by_series* is also
+                ``True``, all files in each series are read and numeric tags are
+                summarised as ``"min~max"`` ranges instead of only showing the
+                representative file's value.
+            max_workers: Process-pool size (``None`` = CPU count).
+            debug: When ``True``, limit processing to the first 10 directories
+                (series mode) or first 10 files (file mode).
+        """
+        self.logger.info(f"Processing: {input_path}")
+        self.logger.info(f"Tags to read: {tags}")
+
+        results: List[Dict] = []
+        backend = self.backend
+
+        if group_by_series:
+            # Directory-first mode: discover directories and process each in parallel
+            directories = self.find_dicom_directories(input_path, recursive, max_workers)
+
+            if not directories:
+                self.logger.warning("No DICOM directories found")
+                return
+
+            if debug:
+                directories = directories[:10]
+                self.logger.debug("[DEBUG] Truncated to first 10 directories")
+
+            self.logger.info(f"Found {len(directories)} directories with DICOM files")
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+                console=MNTSLogger.global_console,
+            ) as progress:
+                task = progress.add_task("Processing directories...",
+                                         total=len(directories))
+                pool = ProcessPoolExecutor(max_workers=max_workers)
+                try:
+                    n_workers = max_workers or (os.cpu_count() or 1)
+                    window = n_workers * 4
+                    pending: dict = {}
+                    iterator = iter(directories)
+
+                    for dir_path in itertools.islice(iterator, window):
+                        f = pool.submit(_process_directory_complete_worker,
+                                        dir_path, tags, backend, summarize_numeric)
+                        pending[f] = dir_path
+
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                       timeout=120.0)
+                        if not done:
+                            for f in list(pending):
+                                dir_path = pending.pop(f)
+                                self.logger.warning(
+                                    f"Directory processing timed out, skipping: {dir_path}")
+                                progress.advance(task)
+                            break
+                        for f in done:
+                            dir_path = pending.pop(f)
+                            try:
+                                dir_results = f.result()
+                                results.extend(dir_results)
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Error processing directory {dir_path}: {e}")
+                            progress.advance(task)
+                            next_dir = next(iterator, None)
+                            if next_dir is not None:
+                                nf = pool.submit(_process_directory_complete_worker,
+                                                 next_dir, tags, backend, summarize_numeric)
+                                pending[nf] = next_dir
+                finally:
+                    pool.shutdown(wait=False)
+        else:
+            # File mode: discover individual DICOM files
+            dicom_files = self.find_dicom_files(input_path, recursive,
+                                                max_workers=max_workers)
+
+            if not dicom_files:
+                self.logger.warning("No DICOM files found")
+                return
+
+            if debug:
+                dicom_files = dicom_files[:10]
+                self.logger.debug("[DEBUG] Limiting to %d files" % len(dicom_files))
+
+            self.logger.info(f"Found {len(dicom_files)} DICOM files")
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Reading DICOM tags …",
+                                         total=len(dicom_files))
+                pool = ProcessPoolExecutor(max_workers=max_workers)
+                try:
+                    n_workers = max_workers or (os.cpu_count() or 1)
+                    window = n_workers * 4
+                    pending: dict = {}
+                    iterator = iter(dicom_files)
+
+                    for fp in itertools.islice(iterator, window):
+                        f = pool.submit(_read_dicom_tags_worker, fp, tags, backend)
+                        pending[f] = fp
+
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED,
+                                       timeout=60.0)
+                        if not done:
+                            for f in list(pending):
+                                fp = pending.pop(f)
+                                self.logger.warning(
+                                    f"Tag read timed out, skipping: {fp}")
+                                progress.advance(task)
+                            break
+                        for f in done:
+                            fp = pending.pop(f)
+                            try:
+                                tv = f.result()
+                                tv.pop('__num_frames__', None)
+                                results.append({
+                                    'FilePath': str(fp),
+                                    **tv
+                                })
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Error reading tags from {fp}: {e}")
+                            progress.advance(task)
+                            next_fp = next(iterator, None)
+                            if next_fp is not None:
+                                nf = pool.submit(_read_dicom_tags_worker,
+                                                 next_fp, tags, backend)
+                                pending[nf] = next_fp
+                finally:
+                    pool.shutdown(wait=False)
+
+        if id_globber:
+            path_key = 'RepresentativeFile' if group_by_series else 'FilePath'
+            self._inject_subject_id(results, id_globber, path_key)
+
+        # Add the filepaths to the tags
+        tags.append('RepresentativeFile' if group_by_series else 'FilePath')
+
+        df = self.build_dataframe(results, tags, group_by_series)
+        if 'SubjectID' in df.columns:
+            df = df.sort_values('SubjectID')
+
+        if 'Series Number' in df.columns and 'SubjectID' in df.columns:
+            self.logger.info("Found both Series Number and SubjectID, adding to index")
+            df.set_index(['SubjectID', 'Series Number'], inplace=True)
+            df.sort_index(inplace=True)
+        self._print_results(df, output_format)
+        return df
+
+    def get_tags_from_json(self, input_path: Union[str, Path],
+                           tags: Optional[List[str]] = None,
+                           recursive: bool = True, output_format: str = 'table',
+                           id_globber: Optional[str] = None,
+                           max_workers: Optional[int] = None) -> 'pd.DataFrame | None':
+        """Read DICOM tag information from a directory of JSON files with parallel processing.
+
+        Each JSON file in *input_path* is treated as one entry (typically one
+        series) and must contain DICOM tags as ``"XXXX|XXXX": "value"`` pairs.
+
+        Args:
+            input_path: Path to a single JSON file or a directory of JSON files.
+            tags: List of tags to display.  When ``None`` or empty, all tags
+                  found in the first JSON file are used as the column set.
+            recursive: Whether to search subdirectories for JSON files.
+            output_format: Output format (``'table'``, ``'csv'``, or ``'json'``).
+            id_globber: Optional regex pattern to extract a subject/case ID from
+                each JSON file's name.  When supplied, ``SubjectID`` replaces the
+                file path as the primary index column.
+            max_workers: Maximum number of worker processes (None = CPU count).
+        """
+        self.logger.info(f"Processing JSON source: {input_path}")
+
+        json_files = self.find_json_files(input_path, recursive)
+
+        if not json_files:
+            self.logger.warning("No JSON files found")
+            return None
+
+        self.logger.info(f"Found {len(json_files)} JSON file(s)")
+
+        results = []
+        effective_tags: Optional[List[str]] = list(tags) if tags else None
+
+        # Parallel processing of JSON files
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Reading JSON files...", total=len(json_files))
+            
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_read_json_tags_worker, fp, effective_tags): fp
+                          for fp in json_files}
+                
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        
+                        # Initialize tag list from first file when no tags were requested
+                        if effective_tags is None and '__error__' not in result:
+                            effective_tags = [k for k in result.keys() if k != 'FilePath']
+                        
+                        if '__error__' not in result:
+                            results.append(result)
+                    except Exception as e:
+                        fp = futures[future]
+                        self.logger.warning(f"Error reading JSON file {fp}: {e}")
+                    finally:
+                        progress.advance(task)
+
+        if id_globber:
+            self._inject_subject_id(results, id_globber, path_key='FilePath')
+
+        df = self.build_dataframe(results, effective_tags or [], group_by_series=False)
+        return df
+    
+
+    # ------------------------------------------------------------------
+    # Output formatting
+    # ------------------------------------------------------------------
+
+    def _print_results(self, df: 'pd.DataFrame', output_format: str) -> None:
+        """Dispatch the unified DataFrame to the appropriate output formatter."""
+        if output_format == 'table':
+            self._print_table(df)
+        elif output_format == 'csv':
+            self.logger.info(df.to_csv(index=False))
+        elif output_format == 'json':
+            self.logger.info(df.to_dict('records'))
+        else:
+            self.logger.info(df.to_string())
+
+    def _print_table(self, df: 'pd.DataFrame') -> None:
+        """Render the unified DataFrame as a rich table."""
+        # Resolve console once; used for both empty and non-empty cases
+        rich_handler = next(
+            (h for h in self.logger._logger.handlers if isinstance(h, RichHandler)),
+            None,
+        )
+        console = rich_handler.console if rich_handler else Console()
+
+        if df.empty:
+            console.print("[yellow]No results to display[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold magenta", show_lines=True)
+
+        for col in df.columns:
+            table.add_column(col, **_COL_STYLES.get(col, _DEFAULT_TAG_STYLE))
+
+        for row in df.itertuples(index=False, name=None):
+            table.add_row(*[str(v) for v in row])
+
+        entity = 'series' if 'FileCount' in df.columns else 'files'
+        console.print()
+        console.print(table)
+        console.print(f"\n[bold green]Total: {len(df)} {entity}[/bold green]")
+
+
+
+# ------------------------------------------------------------------
+# Convenience functions
+# ------------------------------------------------------------------
+
+def print_dicom_tags(input_path: Union[str, Path], tags: List[str], **kwargs) -> None:
+    """Convenience function for printing DICOM tags.
+
+    Args:
+        input_path: Input path
+        tags: List of tags
+        **kwargs: Additional arguments passed to DicomTagPrinter.print_tags
+    """
+    printer = DicomTagPrinter()
+    printer.get_dataframe(input_path, tags, **kwargs)
+
+
+def print_dicom_tags_from_json(input_path: Union[str, Path],
+                               tags: Optional[List[str]] = None,
+                               **kwargs) -> None:
+    """Convenience function for printing DICOM tags sourced from JSON files.
+
+    Args:
+        input_path: Path to a JSON file or directory of JSON files
+        tags: List of tags to display (all tags shown when omitted)
+        **kwargs: Additional arguments passed to
+                  :meth:`DicomTagPrinter.print_tags_from_json`
+    """
+    printer = DicomTagPrinter()
+    printer.get_tags_from_json(input_path, tags, **kwargs)
+
+
+def validate_tag_format(ctx, param, value):
+    """Validate DICOM tag format"""
+    if value:
+        for tag in value:
+            if tag in ('default', 'mri'):
+                continue
+            if not re.match(r'^[0-9a-fA-F]{4}\|[0-9a-fA-F]{4}$', tag):
+                raise click.BadParameter(f"Invalid tag format: {tag}. Format should be XXXX|XXXX (e.g., 0008|103e)")
+    return value

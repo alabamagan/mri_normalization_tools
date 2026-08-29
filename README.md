@@ -1,23 +1,26 @@
-# Introduction
+# MRI Normalization Tools
 
-Radiomics is the high-throughput data mining of imaging features to identify potential markers that are relevant to a
-pathology or an interesting trait. It has the potential to enable personalized treatment design and disease management.
-To be able to characterize a lesion in a non-invasive fashion is its major value. However, the clical community is expressing concerns with regard to the reproducibility of radiomics results.
+[![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://badge.fury.io/py/mri-normalization-tools.svg)](https://badge.fury.io/py/mri-normalization-tools)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub issues](https://img.shields.io/github/issues/alabamagan/mri_normalization_tools.svg)](https://github.com/alabamagan/mri_normalization_tools/issues)
+[![GitHub stars](https://img.shields.io/github/stars/alabamagan/mri_normalization_tools.svg)](https://github.com/alabamagan/mri_normalization_tools/stargazers)
 
-Reproducibility is unfortunately a complicated issue for radiomics because it invovles multiple steps and each step
-contributes some variations that could stack up along the pipeline and lead to unstable results. Its some what like
-trying to walk straight blind-folded such that the error you make each stack accumulates and you will probably find
-yourself way off when you take the cloth off.
+## Introduction
 
-One of the most important source of this variation comes from image acquisition, particularly weighted MRI. Majority of
-the clinically evaluated MRI sequences are not quantitative such that the pixel intensities are not tissue-specific,
-including the commonly used T1- and T2-weigthed sequences. This means that the same patients scanned in different
-machine, or even the same machine at different time, could give images with very different intensity profiles. As such, many normalization algorithms were proposed to enable quantitative studies using MRI.
+Quantitative analysis of MRI is complicated, often with a specific set of steps that are complicated and cannot be 
+easily reproduced. This project aims to allow one-click reproducibility based on a config file. 
 
-Regardless, normalization algorithms are a crucial factors that affects the values of the radiomics features extracted.
-In other words, same image normalized differently gives different radiomics features and does not yeild valid
-comparison. With this regards, this code repo aims to provide a user-friendly and standardized way to normalize the
-images
+## Features
+
+- **Bias Field Correction**: N4ITK bias field correction for improved image quality
+- **Spatial Normalization**: Resampling and orientation correction
+- **Intensity Normalization**: Multiple algorithms including Nyul, Z-score, and histogram matching
+- **Graph-based Pipeline**: Flexible filter chaining with automatic dependency management
+- **Training Support**: Built-in training workflows for normalization algorithms requiring training
+- **MPI Support**: Parallel processing capabilities for large datasets
+- **YAML Configuration**: Define normalization pipelines using YAML files
+- **Console Interface**: Command-line tools for training and inference workflows
 
 ## Key Functions
 
@@ -38,12 +41,37 @@ generally consist of the following steps:
 - cachetools >=4.2.2
 - netgraph >= 0.7.0
 
-# Install
+# Installation
 
-Installation using pip
+## PyPI Installation
 
 ```bash
-pip install git+https://github.com/alabamagan/mri_normalization_tools
+pip install mri-normalization-tools
+```
+
+## Development Installation
+
+```bash
+git clone https://github.com/alabamagan/mri_normalization_tools.git
+cd mri_normalization_tools
+pip install -e .
+```
+
+## Quick Start
+
+```python
+from mnts.filters.geom import SpatialNorm
+from mnts.filters.intensity import N4ITKBiasFieldCorrection, NyulNormalizer
+from mnts.filters.mnts_filters_graph import MNTSFilterGraph
+
+# Create normalization graph
+G = MNTSFilterGraph()
+G.add_node(SpatialNorm(out_spacing=[1, 1, 0]))
+G.add_node(N4ITKBiasFieldCorrection(), [0])
+G.add_node(NyulNormalizer(), [1], is_exit=True)
+
+# Process an image
+result = G.execute("path/to/your/image.nii.gz")
 ```
 
 # Examples
@@ -192,6 +220,41 @@ if __name__ == '__main__':
     Path('default.log').unlink() # Remove useless log file
 ```
 
+### Utility scripts
+
+#### `mnts-dicom2nii` — DICOM → NIfTI conversion
+
+```bash
+mnts-dicom2nii -i /data/raw -o /data/nifti --use-top-level-fname
+mnts-dicom2nii -i /data/raw -o /data/nifti -g '[A-Z]{2}[0-9]{4}'          # ID from path regex
+mnts-dicom2nii -i /data/raw -o /data/nifti --idlist "PT001, PT002"         # subset of subjects
+mnts-dicom2nii -i /data/raw -o /data/nifti --check-image-type-tag          # DIXON scans
+mnts-dicom2nii -i /data/raw -o /data/nifti --add-scan-time                 # multiple sessions
+```
+
+#### `mnts-dcm-tagprint` — print DICOM tags to table / CSV / Excel / SQLite
+
+```bash
+mnts-dcm-tagprint /data/raw -t 0008|103e                                   # series description
+mnts-dcm-tagprint /data/raw -t default                                     # common tag preset
+mnts-dcm-tagprint /data/raw -t mri                                         # full MRI parameters
+mnts-dcm-tagprint /data/raw -t default -f csv -o tags.csv
+mnts-dcm-tagprint /data/raw -t default -f sqlite -o study.db -c Cohort_A
+```
+
+Common tags: `0008|103e` Series Description · `0010|0020` Patient ID · `0008|0020` Study Date ·
+`0018|0080` TR · `0018|0081` TE · `0018|0087` Field Strength
+
+#### `mnts-organize` — sort NIfTI files into per-modality subdirectories
+
+Expects filenames like `PT001-T1+001_tra.nii.gz` (`PatientID-Modality+SeqID`).
+
+```bash
+mnts-organize /data/nifti                                                  # in-place
+mnts-organize /data/nifti --target-dir /data/organized
+mnts-organize /data/nifti --dry-run                                        # preview only
+```
+
 # TODO
 
 - [X] Training required filters
@@ -201,9 +264,12 @@ if __name__ == '__main__':
 - [X] Overflow protection for some function
 - [X] MRI bias field correction
 - [ ] Support processing labels together with images (for spatial operations only)
-- [ ] Finish pipeline implementation
+- [X] Finish pipeline implementation
 - [X] MPI examples
-- [ ] Better documents for usage of dicom2nii
+- [X] Better documents for usage of dicom2nii
+- [ ] Better document for scripts
+- [ ] Incorporate Bash-based steps
+- [ ] Add version and version check for saving graphs
 
 # Example Data
 

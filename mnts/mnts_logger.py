@@ -1,9 +1,11 @@
 import logging
+import logging.handlers
 import traceback
 import os, sys, traceback
 import hashlib
 import tempfile
 import atexit
+from contextlib import contextmanager
 from typing import Any, Optional, Tuple, Iterable
 from pathlib import Path
 from tqdm import *
@@ -55,6 +57,8 @@ class MNTSLogger(object):
 
     """
     global_logger = 'Init'
+    global_console = None
+    _log_queue = None
     all_loggers = {}
     log_levels = {
         'debug': logging.DEBUG,
@@ -106,6 +110,10 @@ class MNTSLogger(object):
                                            log_level=log_level,
                                            keep_file=keep_file)
             cls.is_verbose = cls.global_logger._verbose
+            if cls.global_logger.use_rich_stream:
+                # if rich-handler is use, put out a global console
+                cls.global_console = cls.global_logger._console
+            # Hook uncaught exception to logger system
             cls.global_logger.sys_hook = sys.excepthook
             sys.excepthook = cls.global_logger.exception_hook
             cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
@@ -154,6 +162,7 @@ class MNTSLogger(object):
         self._keep_file = keep_file
         self._logger_name = logger_name
         self._log_level = str(log_level).lower()
+        self._console = None
 
         assert self._log_level in self.log_levels, "Expected argument log_level in one of {}, got {} instead.".format(
             list(self.log_levels.keys()), log_level
@@ -175,6 +184,7 @@ class MNTSLogger(object):
         if MNTSLogger.global_logger is not None:
             for h in MNTSLogger.global_logger._logger.handlers:
                 self._logger.addHandler(h)
+            self._console = MNTSLogger.global_console
         else:
             # otherwise create handlers and mark then as shared handlers
             if self._keep_file:
@@ -201,6 +211,10 @@ class MNTSLogger(object):
             if MNTSLogger.global_logger is None
             else MNTSLogger.global_logger._logger.level
         )
+
+        # Prevent log records from propagating to the root logger, which would
+        # cause double printing when a runner (e.g. Guild) attaches its own root handler.
+        self._logger.propagate = False
 
         # Put this logger in all_logger
         MNTSLogger.all_loggers[logger_name] = self
@@ -238,7 +252,7 @@ class MNTSLogger(object):
                     show_time=True,
                     show_level=True,
                     markup=False,
-                    tracebacks_show_locals=True,
+                    tracebacks_show_locals=False,
                     log_time_format="[%Y-%m-%d %H:%M:%S]",
                     omit_repeated_times=False,
                 )
@@ -251,12 +265,18 @@ class MNTSLogger(object):
                 return handler
         else:
             if self.use_rich_stream:
-                console = Console(
-                    color_system="truecolor",
-                    soft_wrap=True,
-                    width=max(shutil.get_terminal_size().columns, 160),
-                    stderr=True,  # Direct to STDERR
-                )
+                if MNTSLogger.global_console is None:
+                    console = Console(
+                        color_system="truecolor",
+                        soft_wrap=True,
+                        width=max(shutil.get_terminal_size().columns, 160),
+                        stderr=True,  # Direct to STDERR
+                        force_terminal=True
+                    )
+                    self._console = console
+                else:
+                    console = MNTSLogger.global_console
+                    self._console = console
                 rich_handler = RichHandler(
                     console=console,
                     rich_tracebacks=True,
@@ -264,7 +284,7 @@ class MNTSLogger(object):
                     show_time=True,
                     show_level=True,
                     markup=False,
-                    tracebacks_show_locals=True,
+                    tracebacks_show_locals=False,
                     log_time_format="[%Y-%m-%d %H:%M:%S]-R",
                     locals_max_length=10,
                     locals_max_string=80,
@@ -273,6 +293,8 @@ class MNTSLogger(object):
                 rich_handler.setFormatter(rich_formatter)
                 return rich_handler
             else:
+                if MNTSLogger._log_queue is not None:
+                    return logging.handlers.QueueHandler(MNTSLogger._log_queue)
                 stream_handler = logging.StreamHandler()
                 stream_handler.setFormatter(formatter)
                 return stream_handler
@@ -429,7 +451,56 @@ class MNTSLogger(object):
                 pass
             self.__del__()
 
-    def __class_getitem__(cls, item):
+    @classmethod
+    @contextmanager
+    def worker_log_context(cls):
+        """Context manager that routes worker-process logging through the main process.
+
+        Yields ``(queue, initializer)`` where ``queue`` is a
+        ``multiprocessing.Queue`` and ``initializer`` is a callable suitable
+        for ``ProcessPoolExecutor(initializer=initializer, initargs=(queue,))``.
+
+        Within the context, a ``QueueListener`` forwards every record that
+        arrives on the queue to the main process's existing ``RichHandler``
+        (the one already wired to ``global_console``), so all worker log
+        output is rendered cleanly through the live display.
+
+        Example::
+
+            with MNTSLogger.worker_log_context() as (queue, initializer):
+                with ProcessPoolExecutor(initializer=initializer, initargs=(queue,)) as ex:
+                    ...
+        """
+        import multiprocessing
+
+        queue = multiprocessing.Queue()
+
+        # Pull the RichHandler from the global logger so the listener emits
+        # through the same Console instance the progress bar uses.
+        rich_handler = next(
+            (h for h in cls.global_logger._logger.handlers if isinstance(h, RichHandler)),
+            None
+        )
+        if rich_handler is None:
+            raise RuntimeError("No RichHandler found on global logger. "
+                               "Ensure MNTSLogger is initialised with use_rich_stream=True.")
+
+        listener = logging.handlers.QueueListener(queue, rich_handler, respect_handler_level=True)
+
+        def initializer(q):
+            # Runs once in each worker process before any task starts.
+            # Disable the Rich console so workers don't create their own
+            # Console instances writing raw to the shared terminal fd.
+            MNTSLogger.use_rich_stream = False
+            MNTSLogger._log_queue = q
+
+        listener.start()
+        try:
+            yield queue, initializer
+        finally:
+            listener.stop()
+
+    def __class_getitem__(cls, item) -> "MNTSLogger":
         # If global logger haven't be created, casually use temp file to host the log
         if cls.global_logger == 'Init' or cls.global_logger is None:
             cls.global_logger = MNTSLogger('./default.log', logger_name='default',
@@ -537,7 +608,7 @@ class MNTSLogger(object):
     def __str__(self):
         msg = f"This logger: \n\t{self._logger_name} ({self._log_level})\n" + \
               f"All loggers: \n" + "\n".join(["\t- " + l for l in self.all_loggers]) + '\n' + \
-              f"Logfile: \nt\t{self._log_dir}"
+              f"Logfile: \n\t{self._log_dir}"
         return msg
 
     def __repr__(self):

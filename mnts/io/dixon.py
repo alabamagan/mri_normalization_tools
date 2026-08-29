@@ -54,8 +54,12 @@ def DIXON_dcm_to_images(dcm_files: List[Path]) -> Dict[Tuple, sitk.Image]:
         raise TypeError(msg)
 
     # read image types
-    image_types = [(ff, tuple(pydicom.read_file(ff, specific_tags=[pydicom.tag.Tag(0x0008, 0x0008)]).ImageType))
-                   for ff in dcm_files]
+    try:
+        image_types = [(ff, tuple(pydicom.read_file(ff, specific_tags=[pydicom.tag.Tag(0x0008, 0x0008)]).ImageType))
+                       for ff in dcm_files]
+    except AttributeError:
+        image_types = [(ff, tuple(pydicom.dcmread(ff, specific_tags=[pydicom.tag.Tag(0x0008, 0x0008)]).ImageType))
+                       for ff in dcm_files]
 
     # check if there's multiple image types
     unique_image_types = [tuple(ds) for _, ds in image_types]

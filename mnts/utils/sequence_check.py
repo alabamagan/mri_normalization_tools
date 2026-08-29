@@ -54,7 +54,7 @@ def unify_mri_sequence_name(m: str, glob_techniques: bool = False, return_glob_d
     weights = {
         'NECK'   : r"(?i)NECK",
         'T1W'    : r"(?i)T1(?!rho)",
-        'T2W'    : r"(?i)(T2|longTE)",
+        'T2W'    : r"(?i)(T2|longTE|stir)",
         'DWI'    : r"(?i)DWI",
         'IVIM'   : r"(?i)IVIM",
         'DCE'    : r"(?i)DCE",

@@ -50,7 +50,7 @@ class LinearRescale(MNTSIntensityBase, MNTSFilter):
                 input: Union[str, Path, sitk.Image],
                 mask: Union[str, Path, sitk.Image] = None):
         input = self.read_image(input)
-        mask = self.read_image(mask)
+        mask = self.read_image(mask) if mask is not None else None
 
         if not mask is None:
             np_im, np_mask = [sitk.GetArrayFromImage(x) for x in [input, mask]]
