@@ -18,7 +18,6 @@ class RemoveShoulder(MNTSFilter):
     for identifying the shoulder. To prevent top slices (top of the head) to be accidentedly selected, a
     barrier setting is implement that protects the top n slices from being selected.
 
-
     The filter only crops along the specified dimension, leaving the other two dimensions at full size.
     This is useful for extracting representative slices for analysis or preprocessing.
 
@@ -31,6 +30,9 @@ class RemoveShoulder(MNTSFilter):
             Number of slices to count downwards from when searching for the minimum area slice.
             The search starts from the end of the volume and works backwards by this many slices.
             Default is 10 slices.
+
+        [Experimental] dimension (int):
+            This is fixed to 0 until a better way of fixing the direction of nifti is found.
 
     Example:
         >>> from mnts.filters.geom import RemoveShoulder
@@ -88,9 +90,10 @@ class RemoveShoulder(MNTSFilter):
             self._logger.warning("Image and mask have different origin. Using image origin for output.")
 
         # Cache geometry
-        self._image_spacing = image.GetSpacing()   # [sx, sy, sz]
-        self._image_origin = image.GetOrigin()     # [ox, oy, oz]
-        self._image_direction = image.GetDirection()  # 3x3 flattened
+        self._image_spacing   = image.GetSpacing()   # [sx           , sy , sz]
+        self._image_origin    = image.GetOrigin()    # [ox           , oy , oz]
+        self._image_direction = image.GetDirection() # 3x3 flattened
+
 
         # Determine orientation for the specified dimension
         orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(image.GetDirection())
@@ -132,6 +135,7 @@ class RemoveShoulder(MNTSFilter):
         """
         Calculate physical area (mm^2) per slice along given dimension.
         numpy array is [z, y, x]; dimension: 0=z, 1=y, 2=x
+        Pixel size is need to handle anisotropic situation
         """
         # Spacing in SITK is [sx, sy, sz]; array dims are [z, y, x]
         sx, sy, sz = self._image_spacing
