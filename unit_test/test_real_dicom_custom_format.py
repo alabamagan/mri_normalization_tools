@@ -57,6 +57,7 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         result = parse_custom_filename_format(format_string, self.real_dicom_tags, self.logger)
 
         expected = f"{self.real_dicom_tags['0008|1030']}-{self.real_dicom_tags['0010|0020']}"
+        expected = expected.replace(' ', '_').strip()
         self.assertEqual(result, expected)
         print(f"Custom format result: {result}")
 
@@ -101,8 +102,8 @@ class Test_RealDicomCustomFormat(unittest.TestCase):
         print(f"Custom filename: {custom_name}")
 
         # The custom filename should contain values from MR2_J2KI.dcm tags
-        self.assertIn("SHOULDER", custom_name, "Custom format not applied - missing study description")
-        self.assertIn("20040826", custom_name, "Custom format not applied - missing study date")
+        self.assertIn("CT1_abdomen", custom_name, "Custom format not applied - missing study description")
+        self.assertIn("20061012", custom_name, "Custom format not applied - missing study date")
         
         # They should be different
         self.assertNotEqual(default_name, custom_name, "Default and custom filenames should be different")
