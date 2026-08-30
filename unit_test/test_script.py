@@ -35,8 +35,9 @@ def create_random_boxes(size: Sequence[int], box_size: Sequence[int], intensity:
 """
 Test settings
 """
+_TEST_DIR = Path(__file__).parent
 N = 3 # create 3 images
-out_path = Path('./temp_output')
+out_path = _TEST_DIR / 'temp_output'
 fnames = [f"_temp{i}.nii.gz" for i in range(N)]
 test_yaml =\
 r"""
@@ -83,7 +84,6 @@ class TestScript(unittest.TestCase):
             logger2 = MNTSLogger['logger3']
             logger2.info("Info")
             logger2.debug("debug")
-        Path('./default.log').unlink()
 
         # Test auto delete function
         temp_name = None
@@ -109,7 +109,7 @@ class TestScript(unittest.TestCase):
         with MNTSLogger('./', verbose=True, log_level='debug', keep_file=False) as logger:
             G = create_graph()
             G._logger.set_verbose(1)
-            self.assertEqual(_train_normalization(G, '.', str(out_path), 16), 0)
+            self.assertEqual(_train_normalization(G, str(_TEST_DIR.parent / 'examples' / 'example_data'), str(out_path), 16), 0)
 
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
@@ -130,10 +130,12 @@ class TestScript(unittest.TestCase):
 
     def test_console_entry_train(self):
         r"""Run this after """
-        with open('_temp.yaml', 'w') as f:
-            f.write(test_yaml)
-        self.assertEqual(run_graph_train(f"-i . -f ./_temp.yaml -n 16 -v -o {str(out_path)}".split()), 0)
-        Path('_temp.yaml').unlink()
+        yaml_path = _TEST_DIR / '_temp.yaml'
+        yaml_path.write_text(test_yaml)
+        try:
+            self.assertEqual(run_graph_train(f"-i . -f {str(yaml_path)} -n 16 -v -o {str(out_path)}".split()), 0)
+        finally:
+            yaml_path.unlink(missing_ok=True)
 
     @staticmethod
     def create_samples():
