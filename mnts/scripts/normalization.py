@@ -41,7 +41,7 @@ def _train_normalization(G: MNTSFilterGraph,
 
     # Check if input is one file or a whole directory
     if in_path.is_dir():
-        images = [f for f in in_path.iterdir() if f.name.find('nii') != -1]
+        images = list(in_path.glob("*.nii.gz")) + list(in_path.glob("*.nii"))
         out_names = [f.name for f in images]
     else:
         assert in_path.suffix.find('nii') >= 0, "Can only handle nii files currently."

@@ -37,7 +37,10 @@ def repeat_zip(*args):
             except StopIteration:
                 finished[i] = True
                 iterators[i] = iter(args[i])
-                value = next(iterators[i])
+                try:
+                    value = next(iterators[i])
+                except StopIteration:
+                    return
             values.append(value)
             if all([x[1] for x in finished.items()]):
                 return

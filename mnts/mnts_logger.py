@@ -118,7 +118,9 @@ class MNTSLogger(object):
             sys.excepthook = cls.global_logger.exception_hook
             cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
                                    f"Log level is: {log_level}")
-            return super().__new__(cls)
+            proxy = super().__new__(cls)
+            proxy._was_init_caller = True
+            return proxy
         elif logger_name in cls.all_loggers and logger_name != 'global':
             return cls.all_loggers[logger_name]
         else:
@@ -324,6 +326,8 @@ class MNTSLogger(object):
         return self
 
     def __enter__(self):
+        if getattr(self, '_was_init_caller', False):
+            self._is_global_owner = True
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -332,18 +336,25 @@ class MNTSLogger(object):
             MNTSLogger.global_logger = None
             # Pop first to prevent infinite loop
             MNTSLogger.all_loggers.pop(self._logger_name)
-            for loggers in dict.copy(MNTSLogger.all_loggers):
-                # exist all existing logs
-                MNTSLogger.all_loggers[loggers].__exit__(exc_type, exc_val, exc_tb)
+            for name, sub in dict.copy(MNTSLogger.all_loggers).items():
+                sub.__exit__(exc_type, exc_val, exc_tb)
             MNTSLogger.all_loggers.clear()
+            MNTSLogger.shared_handlers.clear()
+            MNTSLogger.global_console = None
+            MNTSLogger.global_logger = 'Init'
         else:
-            # If self is just an ordinary logger
-            if self._logger_name in MNTSLogger.all_loggers and self == MNTSLogger[self._logger_name]:
+            # If self is just an ordinary logger — use direct dict lookup to avoid
+            # __class_getitem__ side-effects (which could re-create the global mid-cleanup)
+            if (self._logger_name in MNTSLogger.all_loggers and
+                    MNTSLogger.all_loggers[self._logger_name] is self):
                 MNTSLogger.all_loggers.pop(self._logger_name)
             self.debug("Deleting this logger...")
 
-            # If the final logger left is global, delete it too
-            if len(MNTSLogger.all_loggers) == 1:
+            # If the only logger left is global, or this proxy owns the global lifecycle,
+            # trigger full global cleanup
+            should_cleanup = (len(MNTSLogger.all_loggers) == 1 or
+                              getattr(self, '_is_global_owner', False))
+            if should_cleanup and MNTSLogger.global_logger is not None:
                 MNTSLogger.global_logger.__exit__(exc_type, exc_val, exc_tb)
 
         # Remove all handler from loggers
@@ -501,16 +512,16 @@ class MNTSLogger(object):
             listener.stop()
 
     def __class_getitem__(cls, item) -> "MNTSLogger":
-        # If global logger haven't be created, casually use temp file to host the log
+        # If global logger hasn't been created yet, create a default one as a side-effect.
+        # Do NOT assign the return value: __new__'s 'Init' branch sets cls.global_logger
+        # to the real 'global' logger internally; the returned proxy must not overwrite it.
         if cls.global_logger == 'Init' or cls.global_logger is None:
-            cls.global_logger = MNTSLogger('./default.log', logger_name='default',
-                                           verbose=True, keep_file=False)
+            MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
             return MNTSLogger[item]
 
         elif not item in cls.all_loggers:
             if cls.global_logger is None:
-                cls.global_logger = MNTSLogger('./default.log', logger_name='default',
-                                               verbose=True, keep_file=False)
+                MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
                 return MNTSLogger[item]
 
             cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(

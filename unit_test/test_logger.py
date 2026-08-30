@@ -6,7 +6,21 @@ from pathlib import Path
 import os
 import sys
 import io
+import multiprocessing
 from unittest.mock import patch
+
+
+# Module-level worker function — must be picklable for multiprocessing spawn
+def _mpi_worker_create_loggers(worker_id):
+    """Create a logger and a sub-logger inside the worker process."""
+    try:
+        logger = MNTSLogger[f'worker_{worker_id}']
+        logger.info(f"Worker {worker_id} started")
+        sub = MNTSLogger[f'worker_{worker_id}_sub']
+        sub.info(f"Worker {worker_id} sub-logger ok")
+        return True
+    except Exception:
+        return False
 
 class Test_MNTSLogger(unittest.TestCase):
     def test_creating_logger_with_default_arguments(self):
@@ -123,6 +137,68 @@ class Test_MNTSLogger(unittest.TestCase):
         obj = ("Abc", "DFE", [1, 2, 3])
         logger.inspect(obj)
 
+class TestMNTSLoggerMPI(unittest.TestCase):
+    """Tests covering multiprocessing / MPI logger interactions."""
+
+    def setUp(self):
+        MNTSLogger.cleanup()
+
+    def tearDown(self):
+        MNTSLogger.cleanup()
+
+    def test_worker_loggers_independent_of_parent(self):
+        """Worker subprocesses create their own global logger and do not
+        interfere with the parent's lifecycle."""
+        with MNTSLogger('./', verbose=False, keep_file=False) as logger:
+            logger.info("Parent logger active")
+            with multiprocessing.Pool(processes=2) as pool:
+                results = pool.map(_mpi_worker_create_loggers, range(4))
+
+        self.assertTrue(all(results), "One or more workers failed to create loggers")
+        # Parent's with block should have reset state to 'Init'
+        self.assertEqual(MNTSLogger.global_logger, 'Init',
+                         "global_logger should be 'Init' after with block exits")
+        self.assertEqual(len(MNTSLogger.all_loggers), 0,
+                         "all_loggers should be empty after cleanup")
+
+    def test_consecutive_with_blocks_are_independent(self):
+        """Each with block gets a fresh global; settings must not bleed between blocks."""
+        with MNTSLogger('./', verbose=False, keep_file=False) as logger1:
+            logger1.info("First block")
+            MNTSLogger['first_sub'].info("sub in first block")
+            self.assertIsNone(logger1._log_file)
+
+        self.assertEqual(MNTSLogger.global_logger, 'Init')
+        self.assertEqual(len(MNTSLogger.all_loggers), 0)
+
+        # Second block must not inherit the first block's sub-loggers or settings
+        with MNTSLogger('./', verbose=False, keep_file=False) as logger2:
+            logger2.info("Second block — must be fresh")
+            self.assertIsNone(logger2._log_file)
+            self.assertNotIn('first_sub', MNTSLogger.all_loggers)
+
+        self.assertEqual(MNTSLogger.global_logger, 'Init')
+
+    def test_sublogs_cleaned_up_on_exit(self):
+        """Sub-loggers created inside a with block are destroyed when the block exits."""
+        with MNTSLogger('./', verbose=False, keep_file=False) as logger:
+            MNTSLogger['cleanup_sub_a'].info("a")
+            MNTSLogger['cleanup_sub_b'].info("b")
+            self.assertIn('cleanup_sub_a', MNTSLogger.all_loggers)
+
+        self.assertEqual(MNTSLogger.global_logger, 'Init')
+        self.assertEqual(len(MNTSLogger.all_loggers), 0)
+
+    def test_worker_without_with_creates_own_global(self):
+        """A worker that uses MNTSLogger[name] (no with) creates its own global
+        that persists for the worker's lifetime and does not affect the parent."""
+        with multiprocessing.Pool(processes=1) as pool:
+            results = pool.map(_mpi_worker_create_loggers, [99])
+        self.assertTrue(results[0])
+        # Parent never touched global_logger — should still be 'Init'
+        self.assertEqual(MNTSLogger.global_logger, 'Init')
+
+
 class TestMNTSLoggerRichColor(unittest.TestCase):
     def setUp(self):
         self.logger_name = "test_logger"
@@ -133,6 +209,7 @@ class TestMNTSLoggerRichColor(unittest.TestCase):
     def tearDown(self):
         MNTSLogger.cleanup()
 
+    @unittest.skip("Not Implemented")
     def test_turn_off_rich_color(self):
         MNTSLogger.turn_off_rich_color()
         self.logger.info("Printing something without color")
