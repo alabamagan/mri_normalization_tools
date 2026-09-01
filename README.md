@@ -47,14 +47,22 @@ generally consist of the following steps:
 
 ```bash
 pip install mri-normalization-tools
+
+# OR, if you need to run scripts like dcm2nii
+pip install mri-normalization-tools[pydicom]
 ```
 
-## Development Installation
+## Development branch Installation
 
 ```bash
 git clone https://github.com/alabamagan/mri_normalization_tools.git
 cd mri_normalization_tools
 pip install -e .
+
+# perform unittest
+pip install pytest
+cd mri_normalization_tools/
+pytest unit_test/
 ```
 
 ## Quick Start
