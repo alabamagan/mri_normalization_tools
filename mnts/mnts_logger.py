@@ -571,8 +571,10 @@ class MNTSLogger(object):
 
         # Clean list
         del cls.global_logger, cls.all_loggers
-        cls.global_logger = None
+        cls.global_logger = 'Init'
         cls.all_loggers = {}
+        cls.shared_handlers = {}
+        cls.global_console = None
 
     def inspect(self, obj: Any, *args, **kwargs):
         r"""If a rich handler is used for logging, this inspect function will write the inspect result to the log file
