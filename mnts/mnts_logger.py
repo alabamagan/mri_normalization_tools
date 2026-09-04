@@ -157,7 +157,7 @@ class MNTSLogger(object):
         # Do nothing if logger already created because it would have been initialized previuosly
         if logger_name in MNTSLogger.all_loggers:
             self.warning(f"Trying to duplicate logger {logger_name}")
-            return MNTSLogger.all_loggers[logger_name]
+            return
 
         # Define attributes
         self._log_file = None
@@ -615,14 +615,30 @@ class MNTSLogger(object):
                 self._logger.info("Deleting self...")
                 self._logger.info("Removing log file...")
                 MNTSLogger.all_loggers.pop(self._logger_name)
-                self._log_file.close()
-                del self._logger, self._log_file
+                # Remove and close handlers from the cached logging.Logger so the next
+                # bootstrap starts clean (logging.getLogger() caches Loggers by name).
+                for handler in list(self._logger.handlers):
+                    self._logger.removeHandler(handler)
+                    try:
+                        handler.close()
+                    except Exception:
+                        pass
+                try:
+                    self._log_file.close()
+                except Exception:
+                    pass
+                del self._log_file
             else:
                 self._logger.info("Deleting self...")
                 MNTSLogger.all_loggers.pop(self._logger_name)
-                del self._logger
+                for handler in list(self._logger.handlers):
+                    self._logger.removeHandler(handler)
+                    try:
+                        handler.close()
+                    except Exception:
+                        pass
         except Exception as e:
-            # i give up, MPI logger is a nightmare, this class is not thread safe 
+            # i give up, MPI logger is a nightmare, this class is not thread safe
             pass
 
     def __str__(self):
