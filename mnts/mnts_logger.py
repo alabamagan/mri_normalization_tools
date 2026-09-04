@@ -116,8 +116,11 @@ class MNTSLogger(object):
             # Hook uncaught exception to logger system
             cls.global_logger.sys_hook = sys.excepthook
             sys.excepthook = cls.global_logger.exception_hook
-            cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
-                                   f"Log level is: {log_level}")
+            try:
+                cls.global_logger.info(f"Created first logger. Exception hooked to this logger. "
+                                       f"Log level is: {log_level}")
+            except Exception:
+                pass
             proxy = super().__new__(cls)
             proxy._was_init_caller = True
             return proxy
@@ -154,7 +157,7 @@ class MNTSLogger(object):
         # Do nothing if logger already created because it would have been initialized previuosly
         if logger_name in MNTSLogger.all_loggers:
             self.warning(f"Trying to duplicate logger {logger_name}")
-            return
+            return MNTSLogger.all_loggers[logger_name]
 
         # Define attributes
         self._log_file = None
@@ -222,10 +225,13 @@ class MNTSLogger(object):
         MNTSLogger.all_loggers[logger_name] = self
 
         # Messages
-        if self._log_file is not None:
-            self.info(f"Logging to {self._log_dir} with log level: {self._logger.level}")
-        else:
-            self.info(f"Logging to STDERR with log level: {self._logger.level}")
+        try:
+            if self._log_file is not None:
+                self.info(f"Logging to {self._log_dir} with log level: {self._logger.level}")
+            else:
+                self.info(f"Logging to STDERR with log level: {self._logger.level}")
+        except Exception:
+            pass
 
     def _create_handler(self, logger, formatter, is_file_handler=False):
         """
@@ -512,27 +518,28 @@ class MNTSLogger(object):
             listener.stop()
 
     def __class_getitem__(cls, item) -> "MNTSLogger":
-        # If global logger hasn't been created yet, create a default one as a side-effect.
-        # Do NOT assign the return value: __new__'s 'Init' branch sets cls.global_logger
-        # to the real 'global' logger internally; the returned proxy must not overwrite it.
         if cls.global_logger == 'Init' or cls.global_logger is None:
-            MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
-            return MNTSLogger[item]
-
-        elif not item in cls.all_loggers:
-            if cls.global_logger is None:
+            try:
                 MNTSLogger('./default.log', logger_name='default', verbose=True, keep_file=False)
-                return MNTSLogger[item]
+            except Exception:
+                pass  # fall through; global_logger may still be set even if info() call failed
 
-            cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(
-                str(item)
-            ))
-            cls.all_loggers[item] = MNTSLogger(cls.global_logger._log_dir,
-                                               logger_name=str(item),
-                                               verbose=cls.is_verbose)
+        if item in cls.all_loggers:
             return cls.all_loggers[item]
-        else:
-            return cls.all_loggers[item]
+
+        if cls.global_logger is None or cls.global_logger == 'Init':
+            raise RuntimeError(
+                f"MNTSLogger: global logger could not be initialized when requesting '{item}'"
+            )
+
+        try:
+            cls.global_logger.info("Requesting logger [{}] not exist, creating...".format(str(item)))
+        except Exception:
+            pass
+        cls.all_loggers[item] = MNTSLogger(cls.global_logger._log_dir,
+                                           logger_name=str(item),
+                                           verbose=cls.is_verbose)
+        return cls.all_loggers[item]
 
     @staticmethod
     def Log_Print(msg, level=logging.INFO):
