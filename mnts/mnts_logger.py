@@ -187,11 +187,15 @@ class MNTSLogger(object):
 
         # if there's already a global logger, use it's handlers
         if MNTSLogger.global_logger is not None:
+            # Clear first: logging.getLogger() caches Loggers by name, so addHandler
+            # accumulates duplicates across re-initializations otherwise.
+            self._logger.handlers.clear()
             for h in MNTSLogger.global_logger._logger.handlers:
                 self._logger.addHandler(h)
             self._console = MNTSLogger.global_console
         else:
             # otherwise create handlers and mark then as shared handlers
+            self._logger.handlers.clear()
             if self._keep_file:
                 if not 'file_handler' in MNTSLogger.shared_handlers:
                     file_handler = self._create_handler(self._logger, formatter, is_file_handler=True)

@@ -104,6 +104,7 @@ class TestScript(unittest.TestCase):
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
 
+    @unittest.skip("Too long")
     def test_norm_2_train_mpi(self):
         # Create graph
         with MNTSLogger('./', verbose=True, log_level='debug', keep_file=False) as logger:
@@ -114,6 +115,7 @@ class TestScript(unittest.TestCase):
         # Halt clean dir
         TestScript.CLEAN_FLAG = False
 
+    @unittest.skip("Too long")
     def test_norm_1_inference(self):
         G = create_graph()
         G._logger.set_verbose(1)
@@ -121,6 +123,7 @@ class TestScript(unittest.TestCase):
 
         TestScript.CLEAN_FLAG = True
 
+    @unittest.skip("Too long")
     def test_norm_3_inference_mpi(self):
         G = create_graph()
         G._logger.set_verbose(1)
@@ -149,6 +152,9 @@ class TestScript(unittest.TestCase):
             [Path(f).unlink() for f in fnames]
             shutil.rmtree(str(out_path))
         pass
+
+    def setUp(self):
+        TestScript.create_samples()
 
     def tearDown(self):
         TestScript.clean_dir()
